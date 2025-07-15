@@ -71,7 +71,7 @@ void socket_connect(void)
 		ERR(PERRN, "failed to connect(): ");
 }
 
-int socket_accpet(void)
+int socket_accept(void)
 {
 	return accept(sockfd, NULL, 0);
 }
