@@ -7,6 +7,7 @@
 
 #include "logger.h"
 
+#include "buffer.h"
 #include "memory.h"
 #include "socket.h"
 #include "server.h"
@@ -23,21 +24,21 @@
 void validate_data(void)
 {
 	char *buffer = malloc(BUFFER_SIZE);
+	char *result;
+
 	if (buffer == NULL)
-		ERR(ERRN, "failed to malloc(): ");
+		ERR(PERRN, "failed to malloc(): ");
 
 	amdgpu_dmabuf_provider.memcpy_from(
 		buffer, membuf, 0, BUFFER_SIZE
 	);
 
-	for (int i = 0; i < BUFFER_SIZE; i++) {
-		if (buffer[i] != 'A' + (i % ('Z' - 'A' + 1))) {
-			printf("%.10s", &buffer[i - 5]);
-			ERR(ERRN, "invalid at %d", i);
-		}
-	}
+	if (buffer_validate(buffer, BUFFER_SIZE, BUFFER_PATTERN))
+		result = "valid";
+	else
+		result = "invalid";
 
-	log(INFO, "valid");
+	log(INFO, "validate_data: %s", result);
 
 	free(buffer);
 }

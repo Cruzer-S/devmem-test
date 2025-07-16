@@ -7,6 +7,7 @@
 
 #include <sys/socket.h>
 
+#include "buffer.h"
 #include "socket.h"
 
 #include "logger.h"
@@ -35,22 +36,20 @@ static int send_all(int fd, char *buffer, size_t len)
 
 void client_start(bool is_dma, size_t buffer_size)
 {
-	char buffer[BUFSIZ];
+	char *buffer;
 	int retval;
 	size_t sendlen = 0;
 
-	for (int i = 0; i < BUFSIZ; i++)
-		buffer[i] = 'A' + (i % ('Z' - 'A' + 1));
+	buffer = buffer_create(BUFFER_PATTERN, buffer_size);
+	if (buffer == NULL)
+		ERR(PERRN, "failed to buffer_create(): ");
 
 	socket_connect();
 
 	while (sendlen < buffer_size) {
 		size_t offset, len;
 
-		retval = send_all(
-			sockfd, buffer, (sendlen + BUFSIZ) <= buffer_size ? 
-			BUFSIZ : buffer_size - sendlen
-		);
+		retval = send_all(sockfd, buffer, buffer_size - sendlen);
 
 		if (retval == -1)
 			ERR(PERRN, "failed to send(): ");
