@@ -120,8 +120,6 @@ static void server_dma_start(void)
 			break;
 		}
 
-		INFO("ret: %d", ret);
-
 		handle_message(&msg);
 	}
 }
@@ -140,8 +138,6 @@ static void server_tcp_start(void)
 			INFO("close from %d", clnt_sock);
 			break;
 		}
-
-		INFO("ret: %d", ret);
 
 		amdgpu_membuf_provider.memcpy_to(membuf, buffer, readlen, ret);
 

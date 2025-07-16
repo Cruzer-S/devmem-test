@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
 	else		client_start(is_dma, BUFFER_SIZE);
 	finish = clock();
 
-	log(INFO, "time: %lf", (finish - start) / CLOCKS_PER_SEC);
+	log(INFO, "time: %lf", (double)(finish - start) / CLOCKS_PER_SEC);
 
 	memory_cleanup();
 	socket_destroy();
