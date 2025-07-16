@@ -20,6 +20,28 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+void validate_data(void)
+{
+	char *buffer = malloc(BUFFER_SIZE);
+	if (buffer == NULL)
+		ERR(ERRN, "failed to malloc(): ");
+
+	amdgpu_dmabuf_provider.memcpy_from(
+		buffer, membuf, 0, BUFFER_SIZE
+	);
+
+	for (int i = 0; i < BUFFER_SIZE; i++) {
+		if (buffer[i] != 'A' + (i % ('Z' - 'A' + 1))) {
+			printf("%.10s", &buffer[i - 5]);
+			ERR(ERRN, "invalid at %d", i);
+		}
+	}
+
+	log(INFO, "valid");
+
+	free(buffer);
+}
+
 int main(int argc, char *argv[])
 {
 	clock_t start, finish;
@@ -60,6 +82,8 @@ int main(int argc, char *argv[])
 	finish = clock();
 
 	log(INFO, "time: %lf", (double)(finish - start) / CLOCKS_PER_SEC);
+
+	validate_data();
 
 	memory_cleanup();
 	socket_destroy();

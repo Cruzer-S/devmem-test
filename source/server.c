@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <unistd.h>
 
@@ -25,65 +26,101 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+#define NUM_PAGES	16000
+#define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
+
+#define CTRL_DATA_LEN	32
+#define TOKEN_SIZE	4096
+#define MAX_TOKENS	1024
+#define MAX_FRAGSS	128
+
 static size_t readlen = 0;
 static int clnt_sock;
+static struct dmabuf_token token = {
+	.token_count = 0, .token_start = 0
+};
+
+static uint64_t token_start, token_end;
 
 static const char *cmsg_type_str(int type)
 {
 	switch (type) {
-	case SCM_DEVMEM_DMABUF:		return "SCM_DEVMEM_DMABUF";
-	case SCM_DEVMEM_LINEAR:		return "SCM_DEVMEM_LINEAR";	
+	case SCM_DEVMEM_DMABUF:	return "SCM_DEVMEM_DMABUF";
+	case SCM_DEVMEM_LINEAR:	return "SCM_DEVMEM_LINEAR";	
 	}
 
 	return "unknown";
 }
 
-static void handle_message(struct msghdr *msg)
+void flush_dmabuf(size_t start, size_t size)
 {
-	struct dmabuf_cmsg *dmabuf_cmsg;
-	struct dmabuf_token token;
+	amdgpu_dmabuf_provider.memmove_to(
+		dmabuf, membuf->memory + readlen,
+		start, size
+	);
 
-	int ret;
+	readlen += size;
+
+	INFO("flush dma: %zu", size);
+}
+
+void free_token(void)
+{
+	int ret = setsockopt(
+		clnt_sock, SOL_SOCKET,
+		SO_DEVMEM_DONTNEED,
+		&token, sizeof(struct dmabuf_token)
+	);
+	if (ret == -1)
+		ERR(PERRN, "failed to setsockopt(): ");
+}
+
+static void handle_dmabuf_cmsg(struct dmabuf_cmsg *cmsg)
+{
+	if (token.token_count == 0)
+		goto RESET_TOKEN;
+
+	if (cmsg->frag_offset != token_end) {
+		flush_dmabuf(token_start, token_end - token_start);
+		free_token();
+
+		goto RESET_TOKEN;
+	}
+
+	token.token_count++;
+	token_end += cmsg->frag_size;
+
+	if (token.token_count >= MAX_TOKENS) {
+		flush_dmabuf(token_start, token_end - token_start);
+		free_token();
+
+		goto RESET_TOKEN;
+	}
+
+	return;
+
+RESET_TOKEN:
+	token.token_start = cmsg->frag_token;
+
+	token_start = cmsg->frag_offset;
+	token_end = token_start + cmsg->frag_size;
+
+	token.token_count = 1;
+}
+
+static void handle_message(struct msghdr *msg)
+{	
+	struct dmabuf_cmsg *dmabuf_cmsg;
 
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-		     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
+	     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
-		/*
-		INFO("cmsg->type: %s", cmsg_type_str(cmsg->cmsg_type));
-		INFO("cmsg->len: %zu", cmsg->cmsg_len);
-		INFO("cmsg->level: %d", cmsg->cmsg_level);
-		*/
-
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
-		if (cmsg->cmsg_type == SCM_DEVMEM_DMABUF) {
-			/*
-			INFO("\tfrag_size: %u", dmabuf_cmsg->frag_size);
-			INFO("\tfrag_token: %u", dmabuf_cmsg->frag_token);
-			INFO("\tfrag_offset: %llu", dmabuf_cmsg->frag_offset);
-			INFO("\tflags: %u", dmabuf_cmsg->flags);
-			INFO("\tid: %u", dmabuf_cmsg->dmabuf_id);
-			*/
+		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF)
+			continue;
 
-			amdgpu_dmabuf_provider.memmove_to(
-				dmabuf, membuf->memory + readlen,
-				dmabuf_cmsg->frag_offset,
-				dmabuf_cmsg->frag_size
-			);
-
-			token.token_start = dmabuf_cmsg->frag_token;
-			token.token_count = 1;
-
-			ret = setsockopt(
-				clnt_sock, SOL_SOCKET, SO_DEVMEM_DONTNEED,
-				&token, sizeof(token)
-			);
-			if (ret == -1)
-				ERR(PERRN, "failed to setsockopt(): ");
-		} else if (cmsg->cmsg_type == SCM_DEVMEM_LINEAR) {
-		}
-
-		readlen += dmabuf_cmsg->frag_size;
+		handle_dmabuf_cmsg(dmabuf_cmsg);
 	}
 }
 
@@ -93,7 +130,7 @@ static void server_dma_start(void)
 	struct msghdr msg;
 
 	char iobuffer[BUFSIZ];
-	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg) * 16)];
+	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg) * CTRL_DATA_LEN)];
 
 	int ret;
 
@@ -115,8 +152,11 @@ static void server_dma_start(void)
 		if (ret == -1)
 			ERR(PERRN, "failed to recvmsg(): ");
 
-		if (ret == 0) {
+		if (ret == 0) {	
 			INFO("close from %d", clnt_sock);
+
+			flush_dmabuf(token_start, token_end - token_start);
+			free_token();
 			break;
 		}
 
@@ -126,11 +166,14 @@ static void server_dma_start(void)
 
 static void server_tcp_start(void)
 {
-	char buffer[BUFSIZ];
+	char *buffer = malloc(BUFFER_SIZE);
+	if (buffer == NULL)
+		ERR(ERRN, "failed to malloc(): ");
+
 	int ret;
 
 	while (true) {
-		ret = recv(clnt_sock, buffer, BUFSIZ, 0);
+		ret = recv(clnt_sock, buffer + readlen, BUFFER_SIZE - readlen, 0);
 		if (ret == -1)
 			ERR(PERRN, "failed to recv(): ");
 
@@ -139,10 +182,12 @@ static void server_tcp_start(void)
 			break;
 		}
 
-		amdgpu_membuf_provider.memcpy_to(membuf, buffer, readlen, ret);
-
 		readlen += ret;
 	}
+
+	amdgpu_membuf_provider.memcpy_to(membuf, buffer, readlen, ret);
+
+	free(buffer);
 }
 
 void server_start(bool is_dma)
