@@ -57,4 +57,6 @@ void client_start(bool is_dma, size_t buffer_size)
 
 		sendlen += retval;
 	}
+
+	log(INFO, "sendlen: %zu", sendlen);
 }
