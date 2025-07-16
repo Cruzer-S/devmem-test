@@ -29,7 +29,7 @@
 #define NUM_PAGES	16000
 #define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
 
-#define CTRL_DATA_LEN	32
+#define CTRL_DATA_LEN	1
 #define TOKEN_SIZE	4096
 #define MAX_TOKENS	1024
 #define MAX_FRAGSS	128
@@ -60,8 +60,6 @@ void flush_dmabuf(size_t start, size_t size)
 	);
 
 	readlen += size;
-
-	INFO("flush dma: %zu", size);
 }
 
 void free_token(void)
@@ -73,39 +71,6 @@ void free_token(void)
 	);
 	if (ret == -1)
 		ERR(PERRN, "failed to setsockopt(): ");
-}
-
-static void handle_dmabuf_cmsg(struct dmabuf_cmsg *cmsg)
-{
-	if (token.token_count == 0)
-		goto RESET_TOKEN;
-
-	if (cmsg->frag_offset != token_end) {
-		flush_dmabuf(token_start, token_end - token_start);
-		free_token();
-
-		goto RESET_TOKEN;
-	}
-
-	token.token_count++;
-	token_end += cmsg->frag_size;
-
-	if (token.token_count >= MAX_TOKENS) {
-		flush_dmabuf(token_start, token_end - token_start);
-		free_token();
-
-		goto RESET_TOKEN;
-	}
-
-	return;
-
-RESET_TOKEN:
-	token.token_start = cmsg->frag_token;
-
-	token_start = cmsg->frag_offset;
-	token_end = token_start + cmsg->frag_size;
-
-	token.token_count = 1;
 }
 
 static void handle_message(struct msghdr *msg)
@@ -120,7 +85,29 @@ static void handle_message(struct msghdr *msg)
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF)
 			continue;
 
-		handle_dmabuf_cmsg(dmabuf_cmsg);
+		if (token.token_count == 0) {
+			token.token_start = dmabuf_cmsg->frag_token;
+
+			token_start = dmabuf_cmsg->frag_offset;
+			token_end = token_start;
+		}
+
+		if (token_end != dmabuf_cmsg->frag_offset) {
+			flush_dmabuf(token_start, token_end - token_start);
+
+			token_start = dmabuf_cmsg->frag_offset;
+			token_end = token_start;
+		}
+
+		token.token_count++;
+		token_end += dmabuf_cmsg->frag_size;
+
+		if (token.token_count >= MAX_TOKENS) {
+			flush_dmabuf(token_start, token_end - token_start);
+			free_token();
+
+			token.token_count = 0;
+		}
 	}
 }
 
