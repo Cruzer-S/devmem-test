@@ -5,8 +5,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include <unistd.h>
-
 #include <sys/socket.h>
 
 #include "socket.h"
@@ -43,11 +41,6 @@ void client_start(bool is_dma, size_t buffer_size)
 
 	for (int i = 0; i < BUFSIZ; i++)
 		buffer[i] = 'A' + (i % ('Z' - 'A' + 1));
-
-	buffer[BUFSIZ - 1] = '\0';
-	printf("buffer: %s\n", buffer);
-
-	sleep(10);
 
 	socket_connect();
 
