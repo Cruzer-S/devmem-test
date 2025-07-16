@@ -48,18 +48,22 @@ static void handle_message(struct msghdr *msg)
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 		     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
+		/*
 		INFO("cmsg->type: %s", cmsg_type_str(cmsg->cmsg_type));
 		INFO("cmsg->len: %zu", cmsg->cmsg_len);
 		INFO("cmsg->level: %d", cmsg->cmsg_level);
+		*/
 
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
 		if (cmsg->cmsg_type == SCM_DEVMEM_DMABUF) {
+			/*
 			INFO("\tfrag_size: %u", dmabuf_cmsg->frag_size);
 			INFO("\tfrag_token: %u", dmabuf_cmsg->frag_token);
 			INFO("\tfrag_offset: %llu", dmabuf_cmsg->frag_offset);
 			INFO("\tflags: %u", dmabuf_cmsg->flags);
 			INFO("\tid: %u", dmabuf_cmsg->dmabuf_id);
+			*/
 
 			amdgpu_dmabuf_provider.memmove_to(
 				dmabuf, membuf->memory + readlen,
@@ -78,6 +82,8 @@ static void handle_message(struct msghdr *msg)
 				ERR(PERRN, "failed to setsockopt(): ");
 		} else if (cmsg->cmsg_type == SCM_DEVMEM_LINEAR) {
 		}
+
+		readlen += dmabuf_cmsg->frag_size;
 	}
 }
 
