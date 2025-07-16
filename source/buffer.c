@@ -1,5 +1,6 @@
 #include "buffer.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,8 +27,10 @@ bool buffer_validate(char *buffer, size_t size, char *pattern)
 	size_t len = strlen(pattern);
 
 	for (int i = 0; i < size; i++)
-		if (buffer[i] != pattern[i % len])
+		if (buffer[i] != pattern[i % len]) {
+			printf("invalid at %d\n", i);
 			return false;
+		}
 
 	return true;
 }

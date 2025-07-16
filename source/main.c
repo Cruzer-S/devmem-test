@@ -23,9 +23,10 @@
 
 void validate_data(void)
 {
-	char *buffer = malloc(BUFFER_SIZE);
+	char *buffer;
 	char *result;
 
+ 	buffer = malloc(BUFFER_SIZE);
 	if (buffer == NULL)
 		ERR(PERRN, "failed to malloc(): ");
 
@@ -84,7 +85,8 @@ int main(int argc, char *argv[])
 
 	log(INFO, "time: %lf", (double)(finish - start) / CLOCKS_PER_SEC);
 
-	validate_data();
+	if (is_server)
+		validate_data();
 
 	memory_cleanup();
 	socket_destroy();
