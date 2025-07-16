@@ -11,7 +11,7 @@
 #include "server.h"
 #include "client.h"
 
-#define NUM_PAGES	2048
+#define NUM_PAGES	16000
 #define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
 
 #define ERR(...) do {		\

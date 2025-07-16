@@ -123,7 +123,6 @@ static void server_dma_start(void)
 static void server_tcp_start(void)
 {
 	char buffer[BUFSIZ];
-	size_t readlen = 0;
 	int ret;
 
 	while (true) {
