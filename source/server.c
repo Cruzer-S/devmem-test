@@ -26,10 +26,9 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
-#define NUM_PAGES	16000
+#define NUM_PAGES	16000 * 1024
 #define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
 
-#define CTRL_DATA_LEN	1
 #define TOKEN_SIZE	4096
 #define MAX_TOKENS	1024
 #define MAX_FRAGSS	128
@@ -117,7 +116,7 @@ static void server_dma_start(void)
 	struct msghdr msg;
 
 	char iobuffer[BUFSIZ];
-	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg) * CTRL_DATA_LEN)];
+	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg))];
 
 	int ret;
 
