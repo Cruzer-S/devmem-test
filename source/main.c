@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <time.h>
 
 #include <unistd.h>
 
@@ -21,6 +22,8 @@
 
 int main(int argc, char *argv[])
 {
+	clock_t start, finish;
+
 	char *address, *interface;
 	bool is_dma, is_server;
 	int nqueue, port, ifindex;
@@ -51,8 +54,12 @@ int main(int argc, char *argv[])
 	socket_create(address, port, is_server);
 	memory_setup(BUFFER_SIZE, ifindex, nqueue);
 
+	start = clock();
 	if (is_server)	server_start(is_dma);
 	else		client_start(is_dma, BUFFER_SIZE);
+	finish = clock();
+
+	log(INFO, "time: %lf", (finish - start) / CLOCKS_PER_SEC);
 
 	memory_cleanup();
 	socket_destroy();

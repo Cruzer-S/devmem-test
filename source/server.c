@@ -93,7 +93,7 @@ static void server_dma_start(void)
 	struct msghdr msg;
 
 	char iobuffer[BUFSIZ];
-	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg))];
+	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg) * 16)];
 
 	int ret;
 
