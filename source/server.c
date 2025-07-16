@@ -166,14 +166,17 @@ static void server_dma_start(void)
 
 static void server_tcp_start(void)
 {
-	char *buffer = malloc(BUFFER_SIZE);
+	char *buffer;
+
+	buffer = malloc(BUFFER_SIZE);
 	if (buffer == NULL)
 		ERR(ERRN, "failed to malloc(): ");
 
-	int ret;
-
 	while (true) {
-		ret = recv(clnt_sock, buffer + readlen, BUFFER_SIZE - readlen, 0);
+		int ret = recv(
+			clnt_sock, buffer + readlen,
+			BUFFER_SIZE - readlen, 0
+		);
 		if (ret == -1)
 			ERR(PERRN, "failed to recv(): ");
 
@@ -185,7 +188,7 @@ static void server_tcp_start(void)
 		readlen += ret;
 	}
 
-	amdgpu_membuf_provider.memcpy_to(membuf, buffer, readlen, ret);
+	amdgpu_membuf_provider.memcpy_to(membuf, buffer, 0, readlen);
 
 	free(buffer);
 }

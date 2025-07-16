@@ -34,6 +34,8 @@ void validate_data(void)
 		buffer, membuf, 0, BUFFER_SIZE
 	);
 
+	printf("%.30s\n", buffer);
+
 	if (buffer_validate(buffer, BUFFER_SIZE, BUFFER_PATTERN))
 		result = "valid";
 	else
