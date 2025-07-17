@@ -30,22 +30,9 @@ bool buffer_validate(char *buffer, size_t size, char *pattern)
 {
 	size_t len = strlen(pattern);
 
-	size_t start = 0;
-
-	for (uint64_t i = 0; i < size; i++) {
-		if (start == 0) {
-			if (buffer[i] != pattern[i % len])
-				start = i;
-		} else {
-			if (buffer[i] == pattern[i % len]) {
-				printf("invalid %zu to %zu\n", start, i);
-				start = 0;
-			}
-		}
-	}
-
-	if (start != 0)
-		printf("invalid %zu to %zu\n", start, size);
+	for (uint64_t i = 0; i < size; i++)
+		if (buffer[i] != pattern[i % len])
+			return false;
 
 	return true;
 }
