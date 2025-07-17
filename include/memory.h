@@ -8,6 +8,7 @@
 
 extern struct amdgpu_membuf_buffer *membuf;
 extern struct amdgpu_dmabuf_buffer *dmabuf;
+extern struct ncdevmem *ncdevmem;
 
 void memory_setup(size_t size, int ifindex, int nqueue);
 

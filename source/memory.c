@@ -23,7 +23,7 @@
 
 struct amdgpu_membuf_buffer *membuf;
 struct amdgpu_dmabuf_buffer *dmabuf;
-static struct ncdevmem *ncdevmem;
+struct ncdevmem *ncdevmem;
 
 void memory_setup(size_t size, int ifindex, int nqueue)
 {

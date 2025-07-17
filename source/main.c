@@ -14,7 +14,7 @@
 #include "client.h"
 
 #define NUM_PAGES	16000
-#define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
+#define BUFFER_SIZE	(4096 * NUM_PAGES)
 
 #define ERR(...) do {		\
 	log(__VA_ARGS__);	\

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <ctype.h>
 
 #include <unistd.h>
 
@@ -11,10 +12,12 @@
 
 #include <net/if.h>
 
+#include "ncdevmem.h"
 #include "logger.h"
 
 #include "memory.h"
 #include "socket.h"
+#include "buffer.h"
 
 #include "amdgpu_memory_provider.h"
 #include "amdgpu_membuf_provider.h"
@@ -31,14 +34,14 @@
 
 #define NUM_PAGES	16000
 
-#define NUM_CTRL_DATA	32
+#define NUM_CTRL_DATA	16
 #define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg) * NUM_CTRL_DATA)
 
 #define TOKEN_SIZE	4096
 #define MAX_FRAGS	1024
 #define MAX_TOKENS	128
 
-static size_t readlen = 0;
+static size_t readlen = 0, total_len = 0;
 static int clnt_sock;
 static struct dmabuf_token token = {
 	.token_count = 0, .token_start = 0
@@ -56,16 +59,16 @@ static const char *cmsg_type_str(int type)
 	return "unknown";
 }
 
-void flush_dmabuf(size_t start, size_t end)
+void flush_dmabuf(size_t start, size_t size)
 {
-	INFO("FLUSH_DMABUF: %p ~ %p", start, end);
+	INFO("FLUSH_DMABUF: %p ~ %p", start, start + size);
 
 	amdgpu_dmabuf_provider.memmove_to(
 		dmabuf, membuf->memory + readlen,
-		start, end - start
+		start, size
 	);
 
-	readlen += end - start;
+	readlen += size;
 }
 
 void free_frags(void)
@@ -79,27 +82,67 @@ void free_frags(void)
 		ERR(PERRN, "failed to setsockopt(): ");
 }
 
+void peek_dmabuf(size_t start, size_t size)
+{
+	char buffer[size + 1];
+
+	amdgpu_dmabuf_provider.memcpy_from(
+		buffer, dmabuf, start, size
+	);
+
+	buffer[size] = '\0';
+
+	for (int i = 0; i < size; i++)
+		if (strchr(BUFFER_PATTERN, buffer[i]))
+			putchar(buffer[i]);
+		else
+			putchar('?');
+
+	putchar('\n');
+}
+
 static void handle_message(struct msghdr *msg)
 {	
 	struct dmabuf_cmsg *dmabuf_cmsg;
+	int dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 	     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
-		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF)
+		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
+			log(WARN, "can't handle %s message",
+       				  cmsg_type_str(cmsg->cmsg_type));
 			continue;
+		}
 
-		if (token.token_count == 0)
-			token.token_start = dmabuf_cmsg->frag_token;
-	
+		if (dmabuf_cmsg->dmabuf_id != dmabuf_id) {
+			log(WARN, "invalid dmabuf_id: %d (expected %d)\n",
+			           dmabuf_cmsg->dmabuf_id,
+       				   ncdevmem_get_dmabuf_id(ncdevmem));
+			continue;
+		}
+
+		total_len += dmabuf_cmsg->frag_size;
+
+		flush_dmabuf(dmabuf_cmsg->frag_offset, dmabuf_cmsg->frag_size);
+
+		/*	
 		if (frag_start == 0) {
 			frag_start = dmabuf_cmsg->frag_offset;
 			frag_end = frag_start + dmabuf_cmsg->frag_size;
 			INFO("frag start: %p (%zu)", frag_start, readlen);
 			INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
 		} else {
+			flush_dmabuf(frag_start, frag_end);
+			INFO("frag end: %p (%zu)\n", frag_end, readlen);
+
+			frag_start = dmabuf_cmsg->frag_offset;
+			frag_end = frag_start + dmabuf_cmsg->frag_size;
+			INFO("frag start: %p (%zu)", frag_start, readlen);
+			INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
+
 			if (frag_end != dmabuf_cmsg->frag_offset) {
 				flush_dmabuf(frag_start, frag_end);
 				INFO("frag end: %p (%zu)\n", frag_end, readlen);
@@ -113,23 +156,13 @@ static void handle_message(struct msghdr *msg)
 				frag_end += dmabuf_cmsg->frag_size;
 			}
 		}
+		*/
+
+		if (token.token_count == 0)
+			token.token_start = dmabuf_cmsg->frag_token;
 
 		token.token_count++;
-
 		if (token.token_count >= MAX_FRAGS) {
-			flush_dmabuf(frag_start, frag_end);
-			INFO("frag end: %p (%zu)\n", frag_end, readlen);
-			frag_start = dmabuf_cmsg->frag_offset;
-			frag_end = frag_start + dmabuf_cmsg->frag_size;
-			INFO("frag start: %p (%zu)", frag_start, readlen);
-			INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
-			/*
-			INFO("DMABUF_FLUSH: %zu ~ %zu (%zu)",
-			     token_start, token_end, token_end - token_start);
-
-			flush_dmabuf(token_start, token_end - token_start);
-			*/
-
 			free_frags();
 			token.token_count = 0;
 		}
@@ -166,8 +199,6 @@ static void server_dma_start(void)
 
 		if (ret == 0) {	
 			INFO("close from %d", clnt_sock);
-
-			flush_dmabuf(frag_start, frag_end);
 			free_frags();
 			break;
 		}
