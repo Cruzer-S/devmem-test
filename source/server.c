@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <ctype.h>
 
 #include <unistd.h>
 
@@ -17,11 +16,9 @@
 
 #include "memory.h"
 #include "socket.h"
-#include "buffer.h"
 
 #include "amdgpu_memory_provider.h"
 #include "amdgpu_membuf_provider.h"
-#include "amdgpu_dmabuf_provider.h"
 
 #define INFO(...) log(INFO, __VA_ARGS__)
 #define ERR(...) do {		\

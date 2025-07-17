@@ -7,9 +7,6 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "amdgpu_dmabuf_provider.h"
-#include "memory.h"
-
 char *buffer_create(char *pattern, size_t size)
 {
 	size_t len;
