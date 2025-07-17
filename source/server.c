@@ -26,12 +26,17 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+#define PAGE_SIZE	4096
+#define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
+
 #define NUM_PAGES	16000
-#define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
+
+#define NUM_CTRL_DATA	32
+#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg) * NUM_CTRL_DATA)
 
 #define TOKEN_SIZE	4096
-#define MAX_TOKENS	1024
-#define MAX_FRAGSS	128
+#define MAX_FRAGS	1024
+#define MAX_TOKENS	128
 
 static size_t readlen = 0;
 static int clnt_sock;
@@ -39,7 +44,7 @@ static struct dmabuf_token token = {
 	.token_count = 0, .token_start = 0
 };
 
-static uint64_t token_start, token_end;
+static uint64_t frag_start, frag_end;
 
 static const char *cmsg_type_str(int type)
 {
@@ -51,17 +56,19 @@ static const char *cmsg_type_str(int type)
 	return "unknown";
 }
 
-void flush_dmabuf(size_t start, size_t size)
+void flush_dmabuf(size_t start, size_t end)
 {
+	INFO("FLUSH_DMABUF: %p ~ %p", start, end);
+
 	amdgpu_dmabuf_provider.memmove_to(
 		dmabuf, membuf->memory + readlen,
-		start, size
+		start, end - start
 	);
 
-	readlen += size;
+	readlen += end - start;
 }
 
-void free_token(void)
+void free_frags(void)
 {
 	int ret = setsockopt(
 		clnt_sock, SOL_SOCKET,
@@ -84,27 +91,46 @@ static void handle_message(struct msghdr *msg)
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF)
 			continue;
 
-		if (token.token_count == 0) {
+		if (token.token_count == 0)
 			token.token_start = dmabuf_cmsg->frag_token;
+	
+		if (frag_start == 0) {
+			frag_start = dmabuf_cmsg->frag_offset;
+			frag_end = frag_start + dmabuf_cmsg->frag_size;
+			INFO("frag start: %p (%zu)", frag_start, readlen);
+			INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
+		} else {
+			if (frag_end != dmabuf_cmsg->frag_offset) {
+				flush_dmabuf(frag_start, frag_end);
+				INFO("frag end: %p (%zu)\n", frag_end, readlen);
 
-			token_start = dmabuf_cmsg->frag_offset;
-			token_end = token_start;
-		}
-
-		if (token_end != dmabuf_cmsg->frag_offset) {
-			flush_dmabuf(token_start, token_end - token_start);
-
-			token_start = dmabuf_cmsg->frag_offset;
-			token_end = token_start;
+				frag_start = dmabuf_cmsg->frag_offset;
+				frag_end = frag_start + dmabuf_cmsg->frag_size;
+				INFO("frag start: %p (%zu)", frag_start, readlen);
+				INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
+			} else {
+				INFO("\t%p (%zu)", frag_end, dmabuf_cmsg->frag_size);
+				frag_end += dmabuf_cmsg->frag_size;
+			}
 		}
 
 		token.token_count++;
-		token_end += dmabuf_cmsg->frag_size;
 
-		if (token.token_count >= MAX_TOKENS) {
+		if (token.token_count >= MAX_FRAGS) {
+			flush_dmabuf(frag_start, frag_end);
+			INFO("frag end: %p (%zu)\n", frag_end, readlen);
+			frag_start = dmabuf_cmsg->frag_offset;
+			frag_end = frag_start + dmabuf_cmsg->frag_size;
+			INFO("frag start: %p (%zu)", frag_start, readlen);
+			INFO("\t%p (%zu)", frag_start, dmabuf_cmsg->frag_size);
+			/*
+			INFO("DMABUF_FLUSH: %zu ~ %zu (%zu)",
+			     token_start, token_end, token_end - token_start);
+
 			flush_dmabuf(token_start, token_end - token_start);
-			free_token();
+			*/
 
+			free_frags();
 			token.token_count = 0;
 		}
 	}
@@ -116,7 +142,7 @@ static void server_dma_start(void)
 	struct msghdr msg;
 
 	char iobuffer[BUFSIZ];
-	char ctrl_data[CMSG_SPACE(sizeof(struct dmabuf_cmsg))];
+	char ctrl_data[CTRL_DATA_SIZE];
 
 	int ret;
 
@@ -132,7 +158,7 @@ static void server_dma_start(void)
 		msg.msg_iovlen = 1;
 
 		msg.msg_control = ctrl_data;
-		msg.msg_controllen = CMSG_SPACE(sizeof(struct dmabuf_cmsg));
+		msg.msg_controllen = CTRL_DATA_SIZE;
 
 		ret = recvmsg(clnt_sock, &msg, MSG_SOCK_DEVMEM);
 		if (ret == -1)
@@ -141,8 +167,8 @@ static void server_dma_start(void)
 		if (ret == 0) {	
 			INFO("close from %d", clnt_sock);
 
-			flush_dmabuf(token_start, token_end - token_start);
-			free_token();
+			flush_dmabuf(frag_start, frag_end);
+			free_frags();
 			break;
 		}
 
