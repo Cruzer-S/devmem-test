@@ -39,6 +39,8 @@ void client_start(bool is_dma, size_t buffer_size)
 		if (retval == -1)
 			ERR(PERRN, "failed to send(): ");
 
+		log(INFO, "send: %zu", retval);
+
 		sendlen += retval;
 	}
 
