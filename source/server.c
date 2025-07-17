@@ -38,12 +38,9 @@
 #define MAX_FRAGS	1024
 #define MAX_TOKENS	128
 
-static size_t readlen = 0;
+static size_t readlen;
 static int clnt_sock;
-static struct dmabuf_token token = {
-	.token_count = 0, .token_start = 0
-};
-
+static struct dmabuf_token token;
 static uint64_t frag_start, frag_end;
 
 static const char *cmsg_type_str(int type)
@@ -98,7 +95,7 @@ static void handle_message(struct msghdr *msg)
 			           dmabuf_cmsg->dmabuf_id, dmabuf_id);
 			continue;
 		}
-		
+	
 		if (token.token_count == 0) {
 			token.token_start = dmabuf_cmsg->frag_token;
 			frag_start = frag_end = dmabuf_cmsg->frag_offset;
@@ -131,6 +128,8 @@ static void server_dma_start(void)
 	int ret;
 
 	memset(iobuffer, 0x00, BUFSIZ);
+
+	token.token_count = 0;
 
 	while (true) {
 		memset(&msg, 0x00, sizeof(struct msghdr));
@@ -193,6 +192,8 @@ void server_start(bool is_dma)
 	clnt_sock = socket_accept();
 	if (clnt_sock == -1)
 		ERR(PERRN, "failed to accept(): ");
+
+	readlen = 0;
 
 	if (is_dma)
 		server_dma_start();
