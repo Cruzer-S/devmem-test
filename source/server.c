@@ -26,7 +26,7 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
-#define NUM_PAGES	16000 * 1024
+#define NUM_PAGES	16000
 #define BUFFER_SIZE	(getpagesize() * NUM_PAGES)
 
 #define TOKEN_SIZE	4096
