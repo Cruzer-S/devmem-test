@@ -78,13 +78,14 @@ int main(int argc, char *argv[])
 		nqueue = ifindex = -1;
 	}
 
-	socket_create(address, port, is_server);
 	memory_setup(BUFFER_SIZE, ifindex, queue_start);
 
 	start = clock();
 	for (int i = 0; i < 1024; i++) {
+		socket_create(address, port, is_server);
 		if (is_server)	server_start(is_dma);
 		else		client_start(is_dma, BUFFER_SIZE);
+		socket_destroy();
 	}
 	finish = clock();
 
@@ -94,7 +95,7 @@ int main(int argc, char *argv[])
 		validate_data();
 
 	memory_cleanup();
-	socket_destroy();
+
 
 	logger_destroy();
 
