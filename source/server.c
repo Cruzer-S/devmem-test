@@ -56,6 +56,11 @@ static const char *cmsg_type_str(int type)
 
 static void flush_dmabuf(size_t start, size_t end)
 {
+	size_t size = end - start;
+
+	if (readlen + size >= BUFFER_SIZE)
+		readlen = 0;
+
 	amdgpu_dmabuf_provider.memmove_to(
 		dmabuf, membuf->memory + readlen,
 		start, end - start
@@ -130,7 +135,11 @@ static void server_dma_start(void)
 	token.token_count = 0;
 	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
+	memset(iobuffer, 0x00, BUFSIZ);
+
 	while (true) {
+		memset(&msg, 0x00, sizeof(struct msghdr));
+
 		iovec.iov_base = iobuffer;
 		iovec.iov_len = BUFSIZ;
 
@@ -171,9 +180,16 @@ static void server_tcp_start(void)
 		}
 
 		readlen += ret;
+
+		if (readlen >= BUFFER_SIZE) {
+			amdgpu_membuf_provider.memcpy_to(
+				membuf, buffer, 0, readlen
+			);
+			readlen = 0;
+		}
 	}
 
-	amdgpu_membuf_provider.memcpy_to(membuf, buffer, 0, readlen);
+
 }
 
 void server_start(bool is_dma)
