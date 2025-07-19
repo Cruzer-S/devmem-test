@@ -40,4 +40,6 @@ void client_start(bool is_dma, size_t buffer_size)
 	}
 
 	log(INFO, "sendlen: %zu", sendlen);
+
+	socket_destroy();
 }
