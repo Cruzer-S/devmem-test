@@ -24,6 +24,7 @@
 struct amdgpu_membuf_buffer *membuf;
 struct amdgpu_dmabuf_buffer *dmabuf;
 struct ncdevmem *ncdevmem;
+char *buffer;
 
 void memory_setup(size_t size, int ifindex, int queue)
 {
@@ -44,6 +45,10 @@ void memory_setup(size_t size, int ifindex, int queue)
 	membuf = amdgpu_membuf_provider.alloc(size);
 	if (membuf == NULL)
 		ERR(ERRN, "failed to provider->alloc()");
+
+	buffer = malloc(size);
+	if (buffer == NULL)
+		ERR(ERRN, "failed to malloc(): ");
 }
 
 void memory_cleanup(void)
@@ -52,4 +57,6 @@ void memory_cleanup(void)
 	if (dmabuf)	amdgpu_dmabuf_provider.free(dmabuf);
 
 	amdgpu_membuf_provider.free(membuf);
+
+	free(buffer);
 }

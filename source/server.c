@@ -127,13 +127,9 @@ static void server_dma_start(void)
 
 	int ret;
 
-	memset(iobuffer, 0x00, BUFSIZ);
-
 	token.token_count = 0;
 
 	while (true) {
-		memset(&msg, 0x00, sizeof(struct msghdr));
-
 		iovec.iov_base = iobuffer;
 		iovec.iov_len = BUFSIZ;
 
@@ -160,12 +156,6 @@ static void server_dma_start(void)
 
 static void server_tcp_start(void)
 {
-	char *buffer;
-
-	buffer = malloc(BUFFER_SIZE);
-	if (buffer == NULL)
-		ERR(ERRN, "failed to malloc(): ");
-
 	while (true) {
 		int ret = recv(
 			clnt_sock, buffer + readlen,

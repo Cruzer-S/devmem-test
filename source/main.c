@@ -82,8 +82,10 @@ int main(int argc, char *argv[])
 	memory_setup(BUFFER_SIZE, ifindex, queue_start);
 
 	start = clock();
-	if (is_server)	server_start(is_dma);
-	else		client_start(is_dma, BUFFER_SIZE);
+	for (int i = 0; i < 1024; i++) {
+		if (is_server)	server_start(is_dma);
+		else		client_start(is_dma, BUFFER_SIZE);
+	}
 	finish = clock();
 
 	log(INFO, "time: %lf", (double)(finish - start) / CLOCKS_PER_SEC);
