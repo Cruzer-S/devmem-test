@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <time.h>
 
 #include <unistd.h>
 
@@ -46,8 +45,6 @@ void validate_data(void)
 
 int main(int argc, char *argv[])
 {
-	struct timespec start, end;
-
 	char *address, *interface;
 	bool is_dma, is_server;
 	int queue_start, nqueue;
@@ -81,12 +78,8 @@ int main(int argc, char *argv[])
 	memory_setup(BUFFER_SIZE, ifindex, queue_start);
 	socket_create(address, port, is_server);
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
 	if (is_server)	server_start(is_dma);
-	else		client_start(is_dma, BUFFER_SIZE);
-	clock_gettime(CLOCK_MONOTONIC, &end);
-
-	log(INFO, "time: %lf", (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9);
+	else		client_start(is_dma, BUFFER_SIZE);	
 
 	socket_destroy();
 

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #include <unistd.h>
 
@@ -32,7 +33,7 @@
 #define NUM_PAGES	16000
 
 #define NUM_CTRL_DATA	16
-#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg) * NUM_CTRL_DATA)
+#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg)) * NUM_CTRL_DATA
 
 #define TOKEN_SIZE	4096
 #define MAX_FRAGS	1024
@@ -56,9 +57,7 @@ static const char *cmsg_type_str(int type)
 
 static void flush_dmabuf(size_t start, size_t end)
 {
-	size_t size = end - start;
-
-	if (readlen + size >= BUFFER_SIZE)
+	if (readlen + (end - start) >= BUFFER_SIZE)
 		readlen = 0;
 
 	amdgpu_dmabuf_provider.memmove_to(
@@ -67,9 +66,10 @@ static void flush_dmabuf(size_t start, size_t end)
 	);
 
 	readlen += end - start;
+	total += end - start;
 }
 
-static void free_frags(void)
+static int free_frags(void)
 {
 	int ret = setsockopt(
 		clnt_sock, SOL_SOCKET,
@@ -78,6 +78,8 @@ static void free_frags(void)
 	);
 	if (ret == -1)
 		ERR(PERRN, "failed to setsockopt(): ");
+
+	return ret;
 }
 
 static void handle_message(struct msghdr *msg)
@@ -114,11 +116,15 @@ static void handle_message(struct msghdr *msg)
 		frag_end += dmabuf_cmsg->frag_size;
 
 		token.token_count++;
-		if (token.token_count >= MAX_FRAGS) {
-			flush_dmabuf(frag_start, frag_end);
-			free_frags();
-			token.token_count = 0;
-		}
+	}
+
+	if (token.token_count + NUM_CTRL_DATA >= MAX_FRAGS) {
+		flush_dmabuf(frag_start, frag_end);
+
+		if (free_frags() != token.token_count)
+			log(ERRN, "failed to free_frags()");
+
+		token.token_count = 0;
 	}
 }
 
@@ -135,20 +141,16 @@ static void server_dma_start(void)
 	token.token_count = 0;
 	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
-	memset(iobuffer, 0x00, BUFSIZ);
+	iovec.iov_base = iobuffer;
+	iovec.iov_len = BUFSIZ;
+
+	msg.msg_iov = &iovec;
+	msg.msg_iovlen = 1;
+
+	msg.msg_control = ctrl_data;
+	msg.msg_controllen = CTRL_DATA_SIZE;
 
 	while (true) {
-		memset(&msg, 0x00, sizeof(struct msghdr));
-
-		iovec.iov_base = iobuffer;
-		iovec.iov_len = BUFSIZ;
-
-		msg.msg_iov = &iovec;
-		msg.msg_iovlen = 1;
-
-		msg.msg_control = ctrl_data;
-		msg.msg_controllen = CTRL_DATA_SIZE;
-
 		ret = recvmsg(clnt_sock, &msg, MSG_SOCK_DEVMEM);
 		if (ret == -1)
 			ERR(PERRN, "failed to recvmsg(): ");
@@ -156,7 +158,6 @@ static void server_dma_start(void)
 		if (ret == 0) {	
 			INFO("close from %d", clnt_sock);
 			flush_dmabuf(frag_start, frag_end);
-			free_frags();
 			break;
 		}
 
@@ -180,6 +181,7 @@ static void server_tcp_start(void)
 		}
 
 		readlen += ret;
+		total += ret;
 
 		if (readlen >= BUFFER_SIZE) {
 			amdgpu_membuf_provider.memcpy_to(
@@ -194,21 +196,27 @@ static void server_tcp_start(void)
 
 void server_start(bool is_dma)
 {
+	struct timespec start, end;
+	double seconds, mib;
+
 	clnt_sock = socket_accept();
 	if (clnt_sock == -1)
 		ERR(PERRN, "failed to accept(): ");
 
-	total = 0;
-	for (int i = 0; i < 1024; i++) {
-		readlen = 0;
+	readlen = total = 0;
 
-		if (is_dma)
-			server_dma_start();
-		else
-			server_tcp_start();
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	if (is_dma)
+		server_dma_start();
+	else
+		server_tcp_start();
+	clock_gettime(CLOCK_MONOTONIC, &end);
 
-		total += readlen;
-	}
+	mib = total / (1024.0 * 1024.0);
+	seconds = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+	log(INFO, "transferred: %.2f MiB in %.3f seconds", mib, seconds);
+	log(INFO, "speed: %.2f MiB/s", mib / seconds);
 
 	close(clnt_sock);
 
