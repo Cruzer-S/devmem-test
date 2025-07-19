@@ -50,15 +50,17 @@ int main(int argc, char *argv[])
 
 	char *address, *interface;
 	bool is_dma, is_server;
-	int nqueue, port, ifindex;
+	int queue_start, nqueue;
+	int port, ifindex;
 	
 	int sockfd;
 
 	logger_initialize();
 
-	if (argc != 7)
+	if (argc != 8)
 		ERR(ERRN, "usage: %s <is_server> <address> <port> "
-	  		            "<is_dma> <nqueue> <interface>", argv[0]);
+	  		            "<is_dma> <interface> "
+      				    "<start-queue> <nqueue>", argv[0]);
 
 	is_server = (bool) strtol(argv[1], NULL, 10);
 	address = argv[2];
@@ -66,17 +68,18 @@ int main(int argc, char *argv[])
 
 	is_dma = (bool) strtol(argv[4], NULL, 10);
 	if (is_dma) {
-		nqueue = strtol(argv[5], NULL, 10);
-
-		ifindex = if_nametoindex(argv[6]);
+		ifindex = if_nametoindex(argv[5]);
 		if (ifindex == 0)
 			ERR(PERRN, "failed to if_nametoindex(): ");
+
+		queue_start = strtol(argv[6], NULL, 10);
+		nqueue = strtol(argv[7], NULL, 10);
 	} else {
 		nqueue = ifindex = -1;
 	}
 
 	socket_create(address, port, is_server);
-	memory_setup(BUFFER_SIZE, ifindex, nqueue);
+	memory_setup(BUFFER_SIZE, ifindex, queue_start);
 
 	start = clock();
 	if (is_server)	server_start(is_dma);

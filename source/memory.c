@@ -25,16 +25,17 @@ struct amdgpu_membuf_buffer *membuf;
 struct amdgpu_dmabuf_buffer *dmabuf;
 struct ncdevmem *ncdevmem;
 
-void memory_setup(size_t size, int ifindex, int nqueue)
+void memory_setup(size_t size, int ifindex, int queue)
 {
-	if (ifindex >= 0 && nqueue > 0) { // Use DMA
+	if (ifindex >= 0 && queue > 0) { // Use DMA
 		dmabuf = amdgpu_dmabuf_provider.alloc(size);
 		if (dmabuf == NULL)
 			ERR(ERRN, "failed to provider->alloc()");
 
-		ncdevmem = ncdevmem_setup(ifindex, nqueue, dmabuf->fd);
+		ncdevmem = ncdevmem_setup(ifindex, queue, 1, dmabuf->fd);
 		if (ncdevmem == NULL)
-			ERR(ERRN, "failed to ncdevmem_setup()");
+			ERR(ERRN, "failed to ncdevmem_setup(): %s",
+       				  ncdevmem_get_error());
 	} else {
 		dmabuf = NULL;
 		ncdevmem = NULL;
