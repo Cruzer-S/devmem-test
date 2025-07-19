@@ -38,10 +38,11 @@
 #define MAX_FRAGS	1024
 #define MAX_TOKENS	128
 
-static size_t readlen;
+static size_t readlen, total;
 static int clnt_sock;
 static struct dmabuf_token token;
 static uint64_t frag_start, frag_end;
+static int dmabuf_id;
 
 static const char *cmsg_type_str(int type)
 {
@@ -77,7 +78,6 @@ static void free_frags(void)
 static void handle_message(struct msghdr *msg)
 {	
 	struct dmabuf_cmsg *dmabuf_cmsg;
-	int dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 	     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
@@ -128,6 +128,7 @@ static void server_dma_start(void)
 	int ret;
 
 	token.token_count = 0;
+	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
 	while (true) {
 		iovec.iov_base = iobuffer;
@@ -173,8 +174,6 @@ static void server_tcp_start(void)
 	}
 
 	amdgpu_membuf_provider.memcpy_to(membuf, buffer, 0, readlen);
-
-	free(buffer);
 }
 
 void server_start(bool is_dma)
@@ -183,14 +182,19 @@ void server_start(bool is_dma)
 	if (clnt_sock == -1)
 		ERR(PERRN, "failed to accept(): ");
 
-	readlen = 0;
+	total = 0;
+	for (int i = 0; i < 1024; i++) {
+		readlen = 0;
 
-	if (is_dma)
-		server_dma_start();
-	else
-		server_tcp_start();
+		if (is_dma)
+			server_dma_start();
+		else
+			server_tcp_start();
+
+		total += readlen;
+	}
 
 	close(clnt_sock);
 
-	INFO("readlen: %zu", readlen);
+	INFO("total: %zu", total);
 }

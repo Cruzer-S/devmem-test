@@ -17,6 +17,8 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+size_t total;
+
 void client_start(bool is_dma, size_t buffer_size)
 {
 	int retval;
@@ -24,20 +26,26 @@ void client_start(bool is_dma, size_t buffer_size)
 	
 	socket_connect();
 
-	sendlen = 0;
-	while (sendlen < buffer_size) {
-		retval = send(
-			sockfd, buffer + sendlen,
-			buffer_size - sendlen, 0
-		);
+	total = 0;
 
-		if (retval == -1)
-			ERR(PERRN, "failed to send(): ");
+	for (int i = 0; i < 1024; i++) {
+		sendlen = 0;
+		while (sendlen < buffer_size) {
+			retval = send(
+				sockfd, buffer + sendlen,
+				buffer_size - sendlen, 0
+			);
 
-		log(INFO, "send: %zu", retval);
+			if (retval == -1)
+				ERR(PERRN, "failed to send(): ");
 
-		sendlen += retval;
+			log(INFO, "send: %zu", retval);
+
+			sendlen += retval;
+		}
+
+		total += sendlen;
 	}
 
-	log(INFO, "sendlen: %zu", sendlen);
+	log(INFO, "total: %zu", total);
 }

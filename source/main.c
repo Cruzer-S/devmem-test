@@ -79,16 +79,14 @@ int main(int argc, char *argv[])
 	}
 
 	memory_setup(BUFFER_SIZE, ifindex, queue_start);
+	socket_create(address, port, is_server);
 
 	start = clock();
-	for (int i = 0; i < 1024; i++) {
-		socket_create(address, port, is_server);
-		if (is_server)	server_start(is_dma);
-		else		client_start(is_dma, BUFFER_SIZE);
-		socket_destroy();
-	}
+	if (is_server)	server_start(is_dma);
+	else		client_start(is_dma, BUFFER_SIZE);
 	finish = clock();
 
+	socket_destroy();
 	log(INFO, "time: %lf", (double)(finish - start) / CLOCKS_PER_SEC);
 
 	if (is_server)
