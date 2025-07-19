@@ -7,7 +7,7 @@
 
 #include <sys/socket.h>
 
-#include "buffer.h"
+#include "memory.h"
 #include "socket.h"
 
 #include "logger.h"
@@ -19,7 +19,6 @@
 
 void client_start(bool is_dma, size_t buffer_size)
 {
-	char *buffer;
 	int retval;
 	size_t sendlen;
 	
