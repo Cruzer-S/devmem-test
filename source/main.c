@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
 	socket_create(address, port, is_server);
 
 	if (is_server)	server_start(is_dma);
-	else		client_start(is_dma, BUFFER_SIZE);	
+	else		client_start(is_dma, BUFFER_SIZE, argv[5]);	
 
 	socket_destroy();
 

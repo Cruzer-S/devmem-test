@@ -197,7 +197,7 @@ static void server_tcp_start(void)
 void server_start(bool is_dma)
 {
 	struct timespec start, end;
-	double seconds, mib;
+	double seconds;
 
 	clnt_sock = socket_accept();
 	if (clnt_sock == -1)
@@ -212,11 +212,11 @@ void server_start(bool is_dma)
 		server_tcp_start();
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
-	mib = total / (1024.0 * 1024.0);
 	seconds = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	log(INFO, "transferred: %.2f MiB in %.3f seconds", mib, seconds);
-	log(INFO, "speed: %.2f MiB/s", mib / seconds);
+	log(INFO, "transferred: %.2f MiB in %.3f seconds",
+     		   ((double) total) / (1024.0 * 1024.0), seconds);
+	log(INFO, "speed: %.2f Gbps", (total * 8.0) / (seconds * 1e9));
 
 	close(clnt_sock);
 
