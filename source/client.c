@@ -27,7 +27,7 @@ void client_tcp_start(size_t buffer_size)
 
 	total = 0;
 
-	for (int i = 0; i < 1024; i++) {
+	for (int i = 0; i < 128; i++) {
 		sendlen = 0;
 		while (sendlen < buffer_size) {
 			retval = send(

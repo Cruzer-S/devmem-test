@@ -1,5 +1,8 @@
 #include "server.h"
 
+#define __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -20,6 +23,7 @@
 
 #include "amdgpu_memory_provider.h"
 #include "amdgpu_membuf_provider.h"
+#include "amdgpu_dmabuf_provider.h"
 
 #define INFO(...) log(INFO, __VA_ARGS__)
 #define ERR(...) do {		\
@@ -32,18 +36,22 @@
 
 #define NUM_PAGES	16000
 
-#define NUM_CTRL_DATA	16
-#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg)) * NUM_CTRL_DATA
-
 #define TOKEN_SIZE	4096
 #define MAX_FRAGS	1024
 #define MAX_TOKENS	128
+
+#define NUM_CTRL_DATA	1
+#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg) * NUM_CTRL_DATA)
 
 static size_t readlen, total;
 static int clnt_sock;
 static struct dmabuf_token token;
 static uint64_t frag_start, frag_end;
 static int dmabuf_id;
+
+size_t aligned, not_aligned;
+
+hipStream_t myStream;
 
 static const char *cmsg_type_str(int type)
 {
@@ -60,9 +68,9 @@ static void flush_dmabuf(size_t start, size_t end)
 	if (readlen + (end - start) >= BUFFER_SIZE)
 		readlen = 0;
 
-	amdgpu_dmabuf_provider.memmove_to(
-		dmabuf, membuf->memory + readlen,
-		start, end - start
+	hipMemcpyAsync(
+		membuf->memory + readlen, dmabuf->memory + start,
+		end - start, hipMemcpyDeviceToDevice, myStream
 	);
 
 	readlen += end - start;
@@ -71,7 +79,11 @@ static void flush_dmabuf(size_t start, size_t end)
 
 static int free_frags(void)
 {
-	int ret = setsockopt(
+	int ret;
+
+	hipStreamSynchronize(myStream);
+
+	ret = setsockopt(
 		clnt_sock, SOL_SOCKET,
 		SO_DEVMEM_DONTNEED,
 		&token, sizeof(struct dmabuf_token)
@@ -111,6 +123,9 @@ static void handle_message(struct msghdr *msg)
 		if (frag_end != dmabuf_cmsg->frag_offset) {
 			flush_dmabuf(frag_start, frag_end);
 			frag_start = frag_end = dmabuf_cmsg->frag_offset;
+			not_aligned++;
+		} else {
+			aligned ++;
 		}
 
 		frag_end += dmabuf_cmsg->frag_size;
@@ -138,6 +153,8 @@ static void server_dma_start(void)
 
 	int ret;
 
+	hipStreamCreate(&myStream);
+
 	token.token_count = 0;
 	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
@@ -149,6 +166,8 @@ static void server_dma_start(void)
 
 	msg.msg_control = ctrl_data;
 	msg.msg_controllen = CTRL_DATA_SIZE;
+
+	not_aligned = aligned = 0;
 
 	while (true) {
 		ret = recvmsg(clnt_sock, &msg, MSG_SOCK_DEVMEM);
@@ -163,6 +182,10 @@ static void server_dma_start(void)
 
 		handle_message(&msg);
 	}
+
+	INFO("Alinged: %zu\tNot-Aligned: %zu", aligned, not_aligned);
+
+	hipStreamDestroy(myStream);
 }
 
 static void server_tcp_start(void)
