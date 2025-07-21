@@ -74,6 +74,19 @@ void parse_argument(ArgumentParser parser)
 		log(PERRN, "failed to argument_parser_parse(): ");
 }
 
+void dump_args(void)
+{
+	log(INFO, "interface: %s", interface.s);
+	log(INFO, "serv-addr: %s", serv_addr.s);
+	log(INFO, "serv-port: %d", serv_port.i);
+	log(INFO, "clnt-addr: %s", clnt_addr.s);
+	log(INFO, "clnt-port: %d", clnt_port.i);
+	log(INFO, "server: %s", server.b ? "server" : "client");
+	log(INFO, "enable-dma: %s", enable_dma.b ? "true" : "false");
+	log(INFO, "queue-start: %d", queue_start.i);
+	log(INFO, "num-queue: %d", num_queue.i);
+}
+
 int main(int argc, char *argv[])
 {
 	ArgumentParser parser;
@@ -86,6 +99,8 @@ int main(int argc, char *argv[])
 		log(PERRN, "failed to argument_parser_create(): ");
 
 	parse_argument(parser);
+
+	dump_args();
 
 	ifindex = if_nametoindex(interface.s);
 

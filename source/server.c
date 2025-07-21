@@ -68,8 +68,6 @@ static void flush_dmabuf(size_t buffer_size, size_t start, size_t end)
 
 	readlen += end - start;
 	total += end - start;
-
-	INFO("flush");
 }
 
 static int free_frags(void)
@@ -86,38 +84,17 @@ static int free_frags(void)
 	if (ret == -1)
 		ERR(PERRN, "failed to setsockopt(): ");
 
-	INFO("free");
-
 	return ret;
-}
-
-void dump_dma_cmsg(struct dmabuf_cmsg *cmsg)
-{
-	INFO("frag_offset: %zu", cmsg->frag_offset);
-	INFO("frag_size: %u", cmsg->frag_size);
-	INFO("frag_token: %u", cmsg->frag_token);
-	INFO("dmabuf_id: %u", cmsg->dmabuf_id);
-	INFO("flags: %u", cmsg->flags);
-}
-
-void dump_cmsg(struct cmsghdr *cmsg)
-{
-	INFO("cmsg_len: %zu", cmsg->cmsg_len);
-	INFO("cmsg_level: %d", cmsg->cmsg_level);
-	INFO("cmsg_type: %d", cmsg->cmsg_type);
 }
 
 static void handle_message(struct msghdr *msg, size_t buffer_size)
 {
 	struct dmabuf_cmsg *dmabuf_cmsg;
 
-	INFO("cmsg: %p", CMSG_FIRSTHDR(msg));
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 	     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
-
-		dump_dma_cmsg(dmabuf_cmsg);
 
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
 			log(WARN, "can't handle %s message",
@@ -150,8 +127,6 @@ static void handle_message(struct msghdr *msg, size_t buffer_size)
 		frag_end += dmabuf_cmsg->frag_size;
 
 		token.token_count++;
-
-		INFO("token: %s", token.token_count);
 	}
 
 	if (token.token_count + NUM_CTRL_DATA >= MAX_FRAGS) {
@@ -208,12 +183,6 @@ static void server_dma_start(size_t buffer_size)
 			break;
 		}
 
-		INFO("msg.msg_name: %s", msg.msg_name);
-		INFO("msg.msg_namelen: %d", msg.msg_namelen);
-		INFO("msg.msg_flags: %d", msg.msg_flags);
-		INFO("msg.msg_control: %p", msg.msg_control);
-		INFO("msg.msg_controllen: %zu", msg.msg_controllen);
-
 		handle_message(&msg, buffer_size);
 	}
 
@@ -252,7 +221,7 @@ static void server_tcp_start(size_t buffer_size)
 void server_start(size_t buffer_size, bool is_dma)
 {
 	struct timespec start, end;
-	double seconds;
+	double seconds, mib;
 
 	clnt_sock = socket_accept();
 	if (clnt_sock == -1)
@@ -267,11 +236,11 @@ void server_start(size_t buffer_size, bool is_dma)
 		server_tcp_start(buffer_size);
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
+	mib = total / (1024.0 * 1024.0);
 	seconds = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	log(INFO, "transferred: %.2f MiB in %.3f seconds",
-     		   ((double) total) / (1024.0 * 1024.0), seconds);
-	log(INFO, "speed: %.2f Gbps", (total * 8.0) / (seconds * 1e9));
+	log(INFO, "transferred: %.2f MiB in %.3f seconds", mib, seconds);
+	log(INFO, "speed: %.2f Gbps", (total * 8.0) / (1e9 * seconds));
 
 	close(clnt_sock);
 
