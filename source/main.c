@@ -104,7 +104,12 @@ int main(int argc, char *argv[])
 
 	ifindex = if_nametoindex(interface.s);
 
-	memory_setup(BUFFER_SIZE, ifindex, queue_start.i);
+	if (!enable_dma.b) {
+		ifindex = 0;
+		queue_start.i = 0;
+	}
+
+	memory_setup(BUFFER_SIZE, ifindex, queue_start.i, server.b);
 	if (server.b)
 		socket_create(serv_addr.s, serv_port.i, server.b);
 	else

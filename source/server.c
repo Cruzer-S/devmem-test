@@ -195,8 +195,7 @@ static void server_tcp_start(size_t buffer_size)
 {
 	while (true) {
 		int ret = recv(
-			clnt_sock, buffer + readlen,
-			buffer_size - readlen, 0
+			clnt_sock, buffer, buffer_size, 0
 		);
 		if (ret == -1)
 			ERR(PERRN, "failed to recv(): ");
@@ -211,7 +210,7 @@ static void server_tcp_start(size_t buffer_size)
 
 		if (readlen >= buffer_size) {
 			amdgpu_membuf_provider.memcpy_to(
-				membuf, buffer, 0, readlen
+				membuf, buffer, 0, buffer_size
 			);
 			readlen = 0;
 		}

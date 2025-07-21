@@ -11,7 +11,7 @@ extern struct amdgpu_dmabuf_buffer *dmabuf;
 extern struct ncdevmem *ncdevmem;
 extern char *buffer;
 
-void memory_setup(size_t size, int ifindex, int nqueue);
+void memory_setup(size_t size, int ifindex, int queue, bool is_server);
 
 void memory_cleanup(void);
 
