@@ -4,6 +4,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-void client_start(bool is_dma, size_t size, char *ifname);
+void client_start(char *address, int port, bool is_dma, size_t buffer_size, char *ifname);
 
 #endif

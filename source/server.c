@@ -31,17 +31,10 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
-#define PAGE_SIZE	4096
-#define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
-
-#define NUM_PAGES	16000
-
-#define TOKEN_SIZE	4096
 #define MAX_FRAGS	1024
-#define MAX_TOKENS	128
 
 #define NUM_CTRL_DATA	1
-#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg) * NUM_CTRL_DATA)
+#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg))
 
 static size_t readlen, total;
 static int clnt_sock;
@@ -63,9 +56,9 @@ static const char *cmsg_type_str(int type)
 	return "unknown";
 }
 
-static void flush_dmabuf(size_t start, size_t end)
+static void flush_dmabuf(size_t buffer_size, size_t start, size_t end)
 {
-	if (readlen + (end - start) >= BUFFER_SIZE)
+	if (readlen + (end - start) >= buffer_size)
 		readlen = 0;
 
 	hipMemcpyAsync(
@@ -75,6 +68,8 @@ static void flush_dmabuf(size_t start, size_t end)
 
 	readlen += end - start;
 	total += end - start;
+
+	INFO("flush");
 }
 
 static int free_frags(void)
@@ -91,17 +86,38 @@ static int free_frags(void)
 	if (ret == -1)
 		ERR(PERRN, "failed to setsockopt(): ");
 
+	INFO("free");
+
 	return ret;
 }
 
-static void handle_message(struct msghdr *msg)
-{	
+void dump_dma_cmsg(struct dmabuf_cmsg *cmsg)
+{
+	INFO("frag_offset: %zu", cmsg->frag_offset);
+	INFO("frag_size: %u", cmsg->frag_size);
+	INFO("frag_token: %u", cmsg->frag_token);
+	INFO("dmabuf_id: %u", cmsg->dmabuf_id);
+	INFO("flags: %u", cmsg->flags);
+}
+
+void dump_cmsg(struct cmsghdr *cmsg)
+{
+	INFO("cmsg_len: %zu", cmsg->cmsg_len);
+	INFO("cmsg_level: %d", cmsg->cmsg_level);
+	INFO("cmsg_type: %d", cmsg->cmsg_type);
+}
+
+static void handle_message(struct msghdr *msg, size_t buffer_size)
+{
 	struct dmabuf_cmsg *dmabuf_cmsg;
 
+	INFO("cmsg: %p", CMSG_FIRSTHDR(msg));
 	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 	     cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
+
+		dump_dma_cmsg(dmabuf_cmsg);
 
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
 			log(WARN, "can't handle %s message",
@@ -121,7 +137,10 @@ static void handle_message(struct msghdr *msg)
 		}
 
 		if (frag_end != dmabuf_cmsg->frag_offset) {
-			flush_dmabuf(frag_start, frag_end);
+			if (readlen + (frag_end - frag_start) >= buffer_size)
+				readlen = 0;
+
+			flush_dmabuf(buffer_size, frag_start, frag_end);
 			frag_start = frag_end = dmabuf_cmsg->frag_offset;
 			not_aligned++;
 		} else {
@@ -131,10 +150,15 @@ static void handle_message(struct msghdr *msg)
 		frag_end += dmabuf_cmsg->frag_size;
 
 		token.token_count++;
+
+		INFO("token: %s", token.token_count);
 	}
 
 	if (token.token_count + NUM_CTRL_DATA >= MAX_FRAGS) {
-		flush_dmabuf(frag_start, frag_end);
+		if (readlen + (frag_end - frag_start) >= buffer_size)
+			readlen = 0;
+
+		flush_dmabuf(buffer_size, frag_start, frag_end);
 
 		if (free_frags() != token.token_count)
 			log(ERRN, "failed to free_frags()");
@@ -143,13 +167,13 @@ static void handle_message(struct msghdr *msg)
 	}
 }
 
-static void server_dma_start(void)
+static void server_dma_start(size_t buffer_size)
 {
 	struct iovec iovec;
 	struct msghdr msg;
 
 	char iobuffer[BUFSIZ];
-	char ctrl_data[CTRL_DATA_SIZE];
+	char ctrl_data[sizeof(int) * 20000];
 
 	int ret;
 
@@ -165,7 +189,7 @@ static void server_dma_start(void)
 	msg.msg_iovlen = 1;
 
 	msg.msg_control = ctrl_data;
-	msg.msg_controllen = CTRL_DATA_SIZE;
+	msg.msg_controllen = sizeof(ctrl_data);
 
 	not_aligned = aligned = 0;
 
@@ -176,11 +200,21 @@ static void server_dma_start(void)
 
 		if (ret == 0) {	
 			INFO("close from %d", clnt_sock);
-			flush_dmabuf(frag_start, frag_end);
+
+			if (readlen + (frag_end - frag_start) >= buffer_size)
+				readlen = 0;
+
+			flush_dmabuf(buffer_size, frag_start, frag_end);
 			break;
 		}
 
-		handle_message(&msg);
+		INFO("msg.msg_name: %s", msg.msg_name);
+		INFO("msg.msg_namelen: %d", msg.msg_namelen);
+		INFO("msg.msg_flags: %d", msg.msg_flags);
+		INFO("msg.msg_control: %p", msg.msg_control);
+		INFO("msg.msg_controllen: %zu", msg.msg_controllen);
+
+		handle_message(&msg, buffer_size);
 	}
 
 	INFO("Alinged: %zu\tNot-Aligned: %zu", aligned, not_aligned);
@@ -188,12 +222,12 @@ static void server_dma_start(void)
 	hipStreamDestroy(myStream);
 }
 
-static void server_tcp_start(void)
+static void server_tcp_start(size_t buffer_size)
 {
 	while (true) {
 		int ret = recv(
 			clnt_sock, buffer + readlen,
-			BUFFER_SIZE - readlen, 0
+			buffer_size - readlen, 0
 		);
 		if (ret == -1)
 			ERR(PERRN, "failed to recv(): ");
@@ -206,18 +240,16 @@ static void server_tcp_start(void)
 		readlen += ret;
 		total += ret;
 
-		if (readlen >= BUFFER_SIZE) {
+		if (readlen >= buffer_size) {
 			amdgpu_membuf_provider.memcpy_to(
 				membuf, buffer, 0, readlen
 			);
 			readlen = 0;
 		}
 	}
-
-
 }
 
-void server_start(bool is_dma)
+void server_start(size_t buffer_size, bool is_dma)
 {
 	struct timespec start, end;
 	double seconds;
@@ -230,9 +262,9 @@ void server_start(bool is_dma)
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	if (is_dma)
-		server_dma_start();
+		server_dma_start(buffer_size);
 	else
-		server_tcp_start();
+		server_tcp_start(buffer_size);
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
 	seconds = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;

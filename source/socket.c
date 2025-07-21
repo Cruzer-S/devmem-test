@@ -48,22 +48,27 @@ void socket_create(char *address, int port, bool is_server)
 	sockaddr.sin_port = htons(port);
 	sockaddr.sin_addr.s_addr = inet_addr(address);
 
+	socket_reuseaddr(sockfd);
+
+	ret = bind(sockfd, (struct sockaddr *) &sockaddr,
+		   sizeof(struct sockaddr_in));
+	if (ret == -1)
+		ERR(PERRN, "failed to bind(): ");
+
 	if (is_server) {
-		socket_reuseaddr(sockfd);
-
-		ret = bind(sockfd, (struct sockaddr *) &sockaddr,
-			   sizeof(struct sockaddr_in));
-		if (ret == -1)
-			ERR(PERRN, "failed to bind(): ");
-
 		if (listen(sockfd, BACKLOG) == -1)
 			ERR(PERRN, "failed to listen(): ");
 	}
 }
 
-void socket_connect(void)
+void socket_connect(char *address, int port)
 {
 	int ret;
+
+	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_port = htons(port);
+	sockaddr.sin_addr.s_addr = inet_addr(address);
 
 	ret = connect(sockfd, (struct sockaddr *) &sockaddr,
 		      sizeof(struct sockaddr_in));

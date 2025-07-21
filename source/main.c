@@ -11,14 +11,26 @@
 #include "socket.h"
 #include "server.h"
 #include "client.h"
+#include "argument-parser.h"
 
+#define PAGE_SIZE	4096
 #define NUM_PAGES	16000
-#define BUFFER_SIZE	(4096 * NUM_PAGES)
+#define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
 
 #define ERR(...) do {		\
 	log(__VA_ARGS__);	\
 	exit(EXIT_FAILURE);	\
 } while (true)
+
+#define DEFINE_ARGUMENT(PARSER, VALUE, NAME, T)			\
+	argument_parser_add(PARSER, NAME, NAME, NAME, 		\
+		     	    VALUE, ARGUMENT_PARSER_TYPE_##T)
+
+ArgumentValue interface;
+ArgumentValue serv_addr, serv_port;
+ArgumentValue clnt_addr, clnt_port;
+ArgumentValue enable_dma, server;
+ArgumentValue queue_start, num_queue;
 
 void validate_data(void)
 {
@@ -43,51 +55,57 @@ void validate_data(void)
 	free(buffer);
 }
 
+void parse_argument(ArgumentParser parser)
+{
+	DEFINE_ARGUMENT(parser, &interface, "interface", STRING);
+	DEFINE_ARGUMENT(parser, &serv_addr, "serv-addr", STRING);
+	DEFINE_ARGUMENT(parser, &serv_port, "serv-port", INTEGER);
+	DEFINE_ARGUMENT(parser, &clnt_addr, "clnt-addr", STRING);
+	DEFINE_ARGUMENT(parser, &clnt_port, "clnt-port", INTEGER);
+	DEFINE_ARGUMENT(parser, &enable_dma, "enable-dma", BOOLEAN);
+	DEFINE_ARGUMENT(parser, &server, "server", BOOLEAN);
+	DEFINE_ARGUMENT(parser, &queue_start, "queue-start", INTEGER);
+	DEFINE_ARGUMENT(parser, &num_queue, "num-queue", INTEGER);
+
+	server.b = false;
+	enable_dma.b = false;
+
+	if (argument_parser_parse(parser) == -1)
+		log(PERRN, "failed to argument_parser_parse(): ");
+}
+
 int main(int argc, char *argv[])
 {
-	char *address, *interface;
-	bool is_dma, is_server;
-	int queue_start, nqueue;
-	int port, ifindex;
-	
-	int sockfd;
+	ArgumentParser parser;
+	int ifindex;
 
 	logger_initialize();
 
-	if (argc != 8)
-		ERR(ERRN, "usage: %s <is_server> <address> <port> "
-	  		            "<is_dma> <interface> "
-      				    "<start-queue> <nqueue>", argv[0]);
+	parser = argument_parser_create(argv);
+	if (parser == NULL)
+		log(PERRN, "failed to argument_parser_create(): ");
 
-	is_server = (bool) strtol(argv[1], NULL, 10);
-	address = argv[2];
-	port = strtol(argv[3], NULL, 10);
+	parse_argument(parser);
 
-	is_dma = (bool) strtol(argv[4], NULL, 10);
-	if (is_dma) {
-		ifindex = if_nametoindex(argv[5]);
-		if (ifindex == 0)
-			ERR(PERRN, "failed to if_nametoindex(): ");
+	ifindex = if_nametoindex(interface.s);
 
-		queue_start = strtol(argv[6], NULL, 10);
-		nqueue = strtol(argv[7], NULL, 10);
-	} else {
-		nqueue = ifindex = -1;
-	}
+	memory_setup(BUFFER_SIZE, ifindex, queue_start.i);
+	if (server.b)
+		socket_create(serv_addr.s, serv_port.i, server.b);
+	else
+		socket_create(clnt_addr.s, clnt_port.i, server.b);
 
-	memory_setup(BUFFER_SIZE, ifindex, queue_start);
-	socket_create(address, port, is_server);
-
-	if (is_server)	server_start(is_dma);
-	else		client_start(is_dma, BUFFER_SIZE, argv[5]);	
+	if (server.b)	server_start(BUFFER_SIZE, enable_dma.b);
+	else		client_start(serv_addr.s, serv_port.i, enable_dma.b, BUFFER_SIZE, interface.s);
 
 	socket_destroy();
 
-	if (is_server)
+	if (server.b)
 		validate_data();
 
 	memory_cleanup();
 
+	argument_parser_destroy(parser);
 
 	logger_destroy();
 
