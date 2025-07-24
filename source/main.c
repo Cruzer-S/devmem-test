@@ -100,8 +100,6 @@ int main(int argc, char *argv[])
 
 	parse_argument(parser);
 
-	dump_args();
-
 	ifindex = if_nametoindex(interface.s);
 
 	if (!enable_dma.b) {

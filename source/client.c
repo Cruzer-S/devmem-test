@@ -29,12 +29,13 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
-static size_t writelen, total;
-static const int waittime_ms = 500;
+static size_t total;
+static const int waittime_ms = 1000;
 
 #define MAX_IOV	1024
 #define PAGE_SIZE 4096
-#define CHUNK_SIZE (PAGE_SIZE * 4)
+#define CHUNK_SIZE PAGE_SIZE
+#define MAX_CHUNK_SIZE	(CHUNK_SIZE * MAX_IOV)
 
 void client_tcp_start(char *address, int port, size_t buffer_size)
 {
@@ -137,6 +138,8 @@ static void wait_compl(int fd)
 
 			hi = serr->ee_data;
 			lo = serr->ee_info;
+
+			log(INFO, "tx complete [%d, %d]", lo, hi);
 			return;
 		}
 	}
@@ -151,6 +154,7 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 	struct msghdr msg;
 	struct cmsghdr *cmsg;
 	uint32_t ddmabuf;
+	size_t writesize = 0;
 
 	int opt = 1, ret;
 
@@ -169,18 +173,17 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 
 	total = 0;
 	while (total < buffer_size) {
-		msg.msg_iovlen = (buffer_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-		if (msg.msg_iovlen > MAX_IOV)
-			log(ERRN, "can't partition %zd bytes into maximum of %d chunks",
-			      	  buffer_size, MAX_IOV);
+		if (total + MAX_CHUNK_SIZE >= buffer_size)
+			writesize = buffer_size - total;
+		else
+			writesize = MAX_CHUNK_SIZE;
 
+		msg.msg_iovlen = (writesize + CHUNK_SIZE - 1) / CHUNK_SIZE;
 		for (int i = 0; i < msg.msg_iovlen; i++) {
 			iovec[i].iov_base = (void *) ((size_t) i * CHUNK_SIZE);
 			iovec[i].iov_len = CHUNK_SIZE;
 		}
-
-		iovec[msg.msg_iovlen - 1].iov_len = 
-			buffer_size - (msg.msg_iovlen - 1) * CHUNK_SIZE;
+		// iovec[msg.msg_iovlen - 1].iov_len = CHUNK_SIZE;
 
 		msg.msg_iov = iovec;
 
@@ -199,15 +202,15 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 		if (ret < 0)
 			ERR(PERRN, "failed to sendmsg(): ");
 
-		if (ret != CHUNK_SIZE)
+		if (ret != writesize)
 			ERR(ERRN, "did not send all bytes %d (expected: %zd)",
        				  ret, buffer_size);
 
+		log(INFO, "sendmsg(): %d", ret);
+
 		wait_compl(sockfd);
 
-		total += buffer_size;
-
-		log(INFO, "send: %s", total);
+		total += ret;
 	}
 }
 

@@ -450,6 +450,7 @@ static int do_server(struct memory_buffer *mem)
 	size_t page_aligned_frags = 0;
 	size_t total_received = 0;
 	socklen_t client_addr_len;
+	size_t endptr = -1;
 	bool is_devmem = false;
 	char *tmp_mem = NULL;
 	struct ynl_sock *ys;
@@ -543,6 +544,7 @@ static int do_server(struct memory_buffer *mem)
 			fprintf(stderr, "client exited\n");
 			break;
 		}
+		fprintf(stderr, "recvmsg_ret=%d\n", ret);
 
 		for (cm = CMSG_FIRSTHDR(&msg); cm; cm = CMSG_NXTHDR(&msg, cm)) {
 			if (cm->cmsg_level != SOL_SOCKET ||
@@ -568,12 +570,20 @@ static int do_server(struct memory_buffer *mem)
 
 			if (dmabuf_cmsg->dmabuf_id != dmabuf_id)
 				error(1, 0,
-				      "received on wrong dmabuf_id: flow steering error\n");	
-		
-			if (dmabuf_cmsg->frag_size % getpagesize())
-				non_page_aligned_frags++;
-			else
-				page_aligned_frags++;
+				      "received on wrong dmabuf_id: flow steering error\n");
+
+			if (endptr == -1) {
+				endptr = dmabuf_cmsg->frag_offset;
+			} else {
+				if (endptr == dmabuf_cmsg->frag_offset) {
+					page_aligned_frags++;
+				} else {
+					endptr = dmabuf_cmsg->frag_offset;
+					non_page_aligned_frags++;
+				}
+			}
+
+			endptr += dmabuf_cmsg->frag_size;
 
 			hipMemcpy(
 				tmp_mem + total_received,
@@ -602,7 +612,7 @@ static int do_server(struct memory_buffer *mem)
 				      "SO_DEVMEM_DONTNEED not enough tokens");
 
 			total_received += dmabuf_cmsg->frag_size;
-			/*
+
 			fprintf(stderr,
 				"received frag_page=%10llu, in_page_offset=%10llu, frag_offset=%10p, frag_size=%6u, token=%6u, total_received=%lu, dmabuf_id=%u\n",
 				dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
@@ -610,7 +620,6 @@ static int do_server(struct memory_buffer *mem)
 				dmabuf_cmsg->frag_offset,
 				dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
 				total_received, dmabuf_cmsg->dmabuf_id);
-			*/
 		}
 
 		if (!is_devmem)
@@ -831,8 +840,7 @@ static int do_client(struct memory_buffer *mem)
 			line_size = mem->size - total_sended;
 
 		if (max_chunk) {
-			msg.msg_iovlen =
-				(line_size + max_chunk - 1) / max_chunk;
+			msg.msg_iovlen = (line_size + max_chunk - 1) / max_chunk;
 			if (msg.msg_iovlen > MAX_IOV)
 				error(1, 0,
 				      "can't partition %zd bytes into maximum of %d chunks",

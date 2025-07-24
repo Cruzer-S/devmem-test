@@ -1,6 +1,8 @@
 #include "socket.h"
 
 #include <stdlib.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -35,6 +37,29 @@ static void socket_reuseaddr(int fd)
 		ERR(PERRN, "failed to setsockup(): ");
 }
 
+static int setsockopt_linger(int fd)
+{
+	struct linger so_linger = { .l_onoff = 1, .l_linger = 0 };
+
+	if (setsockopt(fd, SOL_SOCKET, SO_LINGER,
+		       &so_linger, sizeof(so_linger)) == -1)
+		ERR(PERRN, "failed to setsockopt(): ");
+
+	return 0;
+}
+
+static void socket_nonblock(int fd)
+{
+	int flags;
+
+	flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)
+		ERR(PERRN, "failed to fcntl(): ");
+
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+		ERR(PERRN, "failed to fcntl(): ");
+}
+
 void socket_create(char *address, int port, bool is_server)
 {
 	int ret;
@@ -49,6 +74,11 @@ void socket_create(char *address, int port, bool is_server)
 	sockaddr.sin_addr.s_addr = inet_addr(address);
 
 	socket_reuseaddr(sockfd);
+	// setsockopt_linger(sockfd);
+	/*
+	if (is_server)
+		socket_nonblock(sockfd);
+	*/
 
 	ret = bind(sockfd, (struct sockaddr *) &sockaddr,
 		   sizeof(struct sockaddr_in));
@@ -70,15 +100,36 @@ void socket_connect(char *address, int port)
 	sockaddr.sin_port = htons(port);
 	sockaddr.sin_addr.s_addr = inet_addr(address);
 
-	ret = connect(sockfd, (struct sockaddr *) &sockaddr,
+	do {
+		ret = connect(sockfd, (struct sockaddr *) &sockaddr,
 		      sizeof(struct sockaddr_in));
-	if (ret == -1)
-		ERR(PERRN, "failed to connect(): ");
+		if (ret == -1) {
+			if (errno == EINPROGRESS)
+				continue;
+
+			if (errno == EALREADY)
+				continue;
+
+			ERR(PERRN, "failed to connect(): ");
+		}
+	} while (ret < 0);
 }
 
 int socket_accept(void)
 {
-	return accept(sockfd, NULL, 0);
+	int ret;
+
+	do {
+		ret = accept(sockfd, NULL, 0);
+		if (ret == -1) {
+			if (errno == EAGAIN)
+				continue;
+
+			ERR(PERRN, "failed to accept(): ");
+		}
+	} while (ret < 0);
+
+	return ret;
 }
 
 void socket_destroy(void)
