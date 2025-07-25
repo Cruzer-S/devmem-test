@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+extern char *address;
+extern int port;
 extern int sockfd;
 
 void socket_create(char *address, int port, bool is_server);

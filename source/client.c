@@ -201,9 +201,11 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 
 		log(INFO, "sendmsg_ret=%d", ret);
 
+		/*
 		if (ret != (msg.msg_iovlen * CHUNK_SIZE))
 			ERR(ERRN, "did not send all bytes %d (expected: %zd)",
        				  ret, buffer_size);
+		*/
 
 		wait_compl(sockfd);
 
@@ -214,5 +216,5 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 void client_start(char *address, int port, bool is_dma, size_t buffer_size, char *ifname)
 {
 	if (is_dma)	client_dma_start(address, port, buffer_size, ifname);
-	else		client_tcp_start(address, port, buffer_size);
+	else 		client_tcp_start(address, port, buffer_size);
 }

@@ -36,6 +36,7 @@
 #define IOBUFSIZ	819200
 
 #define PAGE_SHIFT	12
+#define MAX_TOKENS	128
 #define MAX_FRAGS	1024
 
 #define NUM_CTRL_DATA	10000
@@ -43,8 +44,8 @@
 
 static size_t total_received;
 static int clnt_sock;
-static struct dmabuf_token token;
-static size_t frag_end;
+
+static size_t frag_start, frag_end;
 static int dmabuf_id;
 
 size_t aligned, non_aligned;
@@ -59,84 +60,79 @@ static const char *cmsg_type_str(int type)
 	return "unknown";
 }
 
-static int free_frags(void)
-{
-	int ret;
-
-	ret = setsockopt(
-		clnt_sock, SOL_SOCKET,
-		SO_DEVMEM_DONTNEED,
-		&token, sizeof(struct dmabuf_token)
-	);
-	if (ret == -1)
-		ERR(PERRN, "failed to setsockopt(): ");
-
-	return ret;
-}
-
-static void handle_message(struct msghdr *msg)
+static void handle_message(struct msghdr *msg, size_t buffer_size)
 {
 	struct dmabuf_cmsg *dmabuf_cmsg;
+	struct dmabuf_token token;
 	struct cmsghdr *cmsg;
 	int ret;
 
+	token.token_count = 0;
 	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
-		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
-
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
 			log(WARN, "can't handle %s message",
        				  cmsg_type_str(cmsg->cmsg_type));
 			continue;
 		}
 
+		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);	
 		if (dmabuf_cmsg->dmabuf_id != dmabuf_id) {
 			log(WARN, "invalid dmabuf_id: %d (expected %d)\n",
 			           dmabuf_cmsg->dmabuf_id, dmabuf_id);
 			continue;
 		}
 
-		total_received += dmabuf_cmsg->frag_size;
+		/*
 		log(INFO, "received frag_page=%-6llu, in_page_offset=%-6llu, frag_offset=%-10p, frag_size=%6u, token=%-6u, total_received_received=%lu, diff=%u",
 			  dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
       			  dmabuf_cmsg->frag_offset % getpagesize(),
       			  dmabuf_cmsg->frag_offset,
       			  dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
 			  total_received, dmabuf_cmsg->frag_offset - frag_end);
+      		*/
+
+		if (token.token_count == 0)
+			token.token_start = dmabuf_cmsg->frag_token;
 	
 		if (frag_end == -1) {
-			frag_end = dmabuf_cmsg->frag_offset;
+			frag_start = frag_end = dmabuf_cmsg->frag_offset;
 		} else {
 			if (frag_end == dmabuf_cmsg->frag_offset) {
 				aligned++;
 			} else {
-				frag_end = dmabuf_cmsg->frag_offset;
+				hipMemcpy(
+					membuf->memory + total_received,
+					dmabuf->memory + frag_start,
+					frag_end - frag_start,
+					hipMemcpyDeviceToDevice
+				);
+				frag_start = frag_end = dmabuf_cmsg->frag_offset;
 				non_aligned++;
 			}
 		}
 
-		frag_end += dmabuf_cmsg->frag_size;
+		frag_end += dmabuf_cmsg->frag_size;	
+		token.token_count++;
 
-		hipMemcpy(
-			membuf->memory + total_received,
-			dmabuf->memory + dmabuf_cmsg->frag_offset,
-			dmabuf_cmsg->frag_size,
-			hipMemcpyDeviceToDevice
-		);
-
-		/*
-		token.token_start = dmabuf_cmsg->frag_token;
-		token.token_count = 1;
-		ret = setsockopt(clnt_sock, SOL_SOCKET,
-		   		 SO_DEVMEM_DONTNEED,
-		   		 &token, sizeof(struct dmabuf_token));
-		if (ret == -1)
-			ERR(PERRN, "failed to setsockopt(): ");	
-      		*/
+		total_received += dmabuf_cmsg->frag_size;
 	}
+
+	hipMemcpy(
+		membuf->memory + total_received,
+		dmabuf->memory + frag_start,
+		frag_end - frag_start,
+		hipMemcpyDeviceToDevice
+	);
+
+	ret = setsockopt(clnt_sock, SOL_SOCKET,
+			 SO_DEVMEM_DONTNEED,
+			 &token, sizeof(struct dmabuf_token));
+	if (ret != token.token_count)
+		ERR(PERRN, "failed to setsockopt(): ");	
 }
 
-static void server_dma_start(void)
+static void server_dma_start(size_t buffer_size)
 {
 	struct iovec iovec;
 	struct msghdr msg;
@@ -172,9 +168,9 @@ static void server_dma_start(void)
        				   CTRL_DATA_SIZE);
 		}
 
-		log(INFO, "recvmsg ret=%d", ret);
+		// log(INFO, "recvmsg ret=%d", ret);
 
-		handle_message(&msg);
+		handle_message(&msg, buffer_size);
 	}
 }
 
@@ -223,7 +219,7 @@ void server_start(size_t buffer_size, bool is_dma)
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	if (is_dma)
-		server_dma_start();
+		server_dma_start(buffer_size);
 	else
 		server_tcp_start(buffer_size);
 	clock_gettime(CLOCK_MONOTONIC, &end);
