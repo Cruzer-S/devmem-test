@@ -44,6 +44,7 @@
 
 static size_t total_received;
 static int clnt_sock;
+static struct dmabuf_token token;
 
 static size_t frag_start, frag_end;
 static int dmabuf_id;
@@ -63,11 +64,10 @@ static const char *cmsg_type_str(int type)
 static void handle_message(struct msghdr *msg, size_t buffer_size)
 {
 	struct dmabuf_cmsg *dmabuf_cmsg;
-	struct dmabuf_token token;
+
 	struct cmsghdr *cmsg;
 	int ret;
 
-	token.token_count = 0;
 	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
@@ -83,15 +83,12 @@ static void handle_message(struct msghdr *msg, size_t buffer_size)
 			continue;
 		}
 
-		/*
 		log(INFO, "received frag_page=%-6llu, in_page_offset=%-6llu, frag_offset=%-10p, frag_size=%6u, token=%-6u, total_received_received=%lu, diff=%u",
 			  dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
       			  dmabuf_cmsg->frag_offset % getpagesize(),
       			  dmabuf_cmsg->frag_offset,
       			  dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
 			  total_received, dmabuf_cmsg->frag_offset - frag_end);
-      		*/
-
 		if (token.token_count == 0)
 			token.token_start = dmabuf_cmsg->frag_token;
 	
@@ -101,37 +98,43 @@ static void handle_message(struct msghdr *msg, size_t buffer_size)
 			if (frag_end == dmabuf_cmsg->frag_offset) {
 				aligned++;
 			} else {
+				non_aligned++;
+
 				hipMemcpy(
 					membuf->memory + total_received,
 					dmabuf->memory + frag_start,
 					frag_end - frag_start,
 					hipMemcpyDeviceToDevice
 				);
+				total_received += frag_end - frag_start;
+
 				frag_start = frag_end = dmabuf_cmsg->frag_offset;
-				non_aligned++;
 			}
 		}
 
-		frag_end += dmabuf_cmsg->frag_size;	
+		frag_end += dmabuf_cmsg->frag_size;
 		token.token_count++;
-
-		total_received += dmabuf_cmsg->frag_size;
 	}
 
-	if (frag_start != frag_end) {
-		hipMemcpy(
-			membuf->memory + total_received,
-			dmabuf->memory + frag_start,
-			frag_end - frag_start,
-			hipMemcpyDeviceToDevice
-		);
-	}
+	if (token.token_count > 1024 * 9) {
+		size_t total_token = token.token_count;
+		size_t free_token = 0;
 
-	ret = setsockopt(clnt_sock, SOL_SOCKET,
-			 SO_DEVMEM_DONTNEED,
-			 &token, sizeof(struct dmabuf_token));
-	if (ret != token.token_count)
-		ERR(PERRN, "failed to setsockopt(): ");	
+		while (total_token > 0) {
+			token.token_count = (total_token > 1024) ? 1024 : total_token;
+			token.token_start = 1 + free_token;
+			ret = setsockopt(clnt_sock, SOL_SOCKET,
+				 SO_DEVMEM_DONTNEED,
+				 &token, sizeof(struct dmabuf_token));
+			if (ret != token.token_count)
+				ERR(PERRN, "failed to setsockopt(): ret: %d\ttoken.token_count: %d\t", ret, token.token_count);
+
+			// INFO("free %d token(s)", ret);
+
+			total_token -= ret;
+			free_token += ret;
+		}
+	}
 }
 
 static void server_dma_start(size_t buffer_size)
@@ -161,6 +164,32 @@ static void server_dma_start(size_t buffer_size)
 			ERR(PERRN, "failed to recvmsg(): ");
 
 		if (ret == 0) {	
+			hipMemcpy(
+				membuf->memory + total_received,
+				dmabuf->memory + frag_start,
+				frag_end - frag_start,
+				hipMemcpyDeviceToDevice
+			);
+			total_received += frag_end - frag_start;
+
+			size_t total_token = token.token_count;
+			size_t free_token = 0;
+
+			while (total_token > 0) {
+				token.token_count = (total_token > 1024) ? 1024 : total_token;
+				token.token_start = 1 + free_token;
+				ret = setsockopt(clnt_sock, SOL_SOCKET,
+					 SO_DEVMEM_DONTNEED,
+					 &token, sizeof(struct dmabuf_token));
+				if (ret != token.token_count)
+					ERR(PERRN, "failed to setsockopt(): ret: %d\ttoken.token_count: %d\t", ret, token.token_count);
+
+				// INFO("free %d token(s)", ret);
+
+				total_token -= ret;
+				free_token += ret;
+			}
+
 			INFO("close from %d", clnt_sock);
 			break;
 		}

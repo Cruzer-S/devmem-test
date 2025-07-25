@@ -55,24 +55,32 @@ void memory_setup(size_t size, int ifindex, int queue, bool is_server)
 	buffer = malloc(size);
 	if (buffer == NULL)
 		ERR(ERRN, "failed to malloc(): ");
+}
 
-	if (!is_server) {
-		for (int i = 0; i < size; i++)
-			buffer[i] = i % SEED;
+void memory_initialize(size_t size)
+{
+	for (int i = 0; i < size; i++)
+		buffer[i] = i % SEED;
 
-		amdgpu_membuf_provider.memcpy_to(dmabuf, buffer, 0, size);
+	amdgpu_membuf_provider.memcpy_to(dmabuf, buffer, 0, size);
 
-		memset(buffer, 0x00, size);
-	}
+	memset(buffer, 0x00, size);
 }
 
 bool memory_validate(size_t size)
 {
+	int count = 0;
 	amdgpu_membuf_provider.memcpy_from(buffer, membuf, 0, size);
 
-	for (int i = 0; i < size; i++)
-		if (buffer[i] != (i % SEED))
+	for (int i = 0; i < size; i++) {
+		if (buffer[i] != (i % SEED)) {
+			printf("invalid at %d [%d:%d]\n", i, buffer[i], i % SEED);
+			count++;
+		}
+
+		if (count > 10)
 			return false;
+	}
 
 	return true;
 }
