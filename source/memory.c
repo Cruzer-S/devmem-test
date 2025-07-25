@@ -21,6 +21,8 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+#define SEED	100
+
 struct amdgpu_membuf_buffer *membuf;
 struct amdgpu_dmabuf_buffer *dmabuf;
 struct ncdevmem *ncdevmem;
@@ -53,6 +55,26 @@ void memory_setup(size_t size, int ifindex, int queue, bool is_server)
 	buffer = malloc(size);
 	if (buffer == NULL)
 		ERR(ERRN, "failed to malloc(): ");
+
+	if (!is_server) {
+		for (int i = 0; i < size; i++)
+			buffer[i] = i % SEED;
+
+		amdgpu_membuf_provider.memcpy_to(dmabuf, buffer, 0, size);
+
+		memset(buffer, 0x00, size);
+	}
+}
+
+bool memory_validate(size_t size)
+{
+	amdgpu_membuf_provider.memcpy_from(buffer, membuf, 0, size);
+
+	for (int i = 0; i < size; i++)
+		if (buffer[i] != (i % SEED))
+			return false;
+
+	return true;
 }
 
 void memory_cleanup(void)

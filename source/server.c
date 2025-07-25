@@ -118,12 +118,14 @@ static void handle_message(struct msghdr *msg, size_t buffer_size)
 		total_received += dmabuf_cmsg->frag_size;
 	}
 
-	hipMemcpy(
-		membuf->memory + total_received,
-		dmabuf->memory + frag_start,
-		frag_end - frag_start,
-		hipMemcpyDeviceToDevice
-	);
+	if (frag_start != frag_end) {
+		hipMemcpy(
+			membuf->memory + total_received,
+			dmabuf->memory + frag_start,
+			frag_end - frag_start,
+			hipMemcpyDeviceToDevice
+		);
+	}
 
 	ret = setsockopt(clnt_sock, SOL_SOCKET,
 			 SO_DEVMEM_DONTNEED,

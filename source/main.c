@@ -6,7 +6,6 @@
 
 #include "logger.h"
 
-#include "buffer.h"
 #include "memory.h"
 #include "socket.h"
 #include "server.h"
@@ -31,29 +30,6 @@ ArgumentValue serv_addr, serv_port;
 ArgumentValue clnt_addr, clnt_port;
 ArgumentValue enable_dma, server;
 ArgumentValue queue_start, num_queue;
-
-void validate_data(void)
-{
-	char *buffer;
-	char *result;
-
- 	buffer = malloc(BUFFER_SIZE);
-	if (buffer == NULL)
-		ERR(PERRN, "failed to malloc(): ");
-
-	amdgpu_dmabuf_provider.memcpy_from(
-		buffer, membuf, 0, BUFFER_SIZE
-	);
-
-	if (buffer_validate(buffer, BUFFER_SIZE, BUFFER_PATTERN))
-		result = "valid";
-	else
-		result = "invalid";
-
-	log(INFO, "validate_data: %s", result);
-
-	free(buffer);
-}
 
 void parse_argument(ArgumentParser parser)
 {
@@ -117,8 +93,13 @@ int main(int argc, char *argv[])
 
 	socket_destroy();
 
-	if (server.b)
-		validate_data();
+	if (server.b) {
+		if (memory_validate(BUFFER_SIZE)) {
+			log(INFO, "memory_validate(): true");
+		} else {
+			log(WARN, "memory_validate(): false");
+		}
+	}
 
 	memory_cleanup();
 
