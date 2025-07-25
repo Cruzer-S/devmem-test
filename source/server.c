@@ -32,6 +32,9 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
+#define PAGE_SIZE	4096
+#define IOBUFSIZ	819200
+
 #define PAGE_SHIFT	12
 #define MAX_FRAGS	1024
 
@@ -92,6 +95,14 @@ static void handle_message(struct msghdr *msg)
 			           dmabuf_cmsg->dmabuf_id, dmabuf_id);
 			continue;
 		}
+
+		total_received += dmabuf_cmsg->frag_size;
+		log(INFO, "received frag_page=%-6llu, in_page_offset=%-6llu, frag_offset=%-10p, frag_size=%6u, token=%-6u, total_received_received=%lu, diff=%u",
+			  dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
+      			  dmabuf_cmsg->frag_offset % getpagesize(),
+      			  dmabuf_cmsg->frag_offset,
+      			  dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
+			  total_received, dmabuf_cmsg->frag_offset - frag_end);
 	
 		if (frag_end == -1) {
 			frag_end = dmabuf_cmsg->frag_offset;
@@ -113,23 +124,14 @@ static void handle_message(struct msghdr *msg)
 			hipMemcpyDeviceToDevice
 		);
 
+		/*
 		token.token_start = dmabuf_cmsg->frag_token;
 		token.token_count = 1;
 		ret = setsockopt(clnt_sock, SOL_SOCKET,
 		   		 SO_DEVMEM_DONTNEED,
 		   		 &token, sizeof(struct dmabuf_token));
 		if (ret == -1)
-			ERR(PERRN, "failed to setsockopt(): ");
-	
-		total_received += dmabuf_cmsg->frag_size;
-
-		/*
-		log(INFO, "received frag_page=%-6llu, in_page_offset=%-6llu, frag_offset=%-10p, frag_size=%6u, token=%-6u, total_received_received=%lu, dmabuf_id=%u",
-			  dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
-      			  dmabuf_cmsg->frag_offset % getpagesize(),
-      			  dmabuf_cmsg->frag_offset,
-      			  dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
-			  total_received, dmabuf_cmsg->dmabuf_id);
+			ERR(PERRN, "failed to setsockopt(): ");	
       		*/
 	}
 }
@@ -139,23 +141,23 @@ static void server_dma_start(void)
 	struct iovec iovec;
 	struct msghdr msg;
 
-	char iobuffer[BUFSIZ];
+	char iobuffer[IOBUFSIZ];
 	char ctrl_data[CTRL_DATA_SIZE];
 
 	int ret;
 
 	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
-	iovec.iov_base = iobuffer;
-	iovec.iov_len = BUFSIZ;
-
-	msg.msg_iov = &iovec;
-	msg.msg_iovlen = 1;
-
-	msg.msg_control = ctrl_data;
-	msg.msg_controllen = CTRL_DATA_SIZE;
-
 	while (true) {
+		iovec.iov_base = iobuffer;
+		iovec.iov_len = IOBUFSIZ;
+
+		msg.msg_iov = &iovec;
+		msg.msg_iovlen = 1;
+
+		msg.msg_control = ctrl_data;
+		msg.msg_controllen = CTRL_DATA_SIZE;
+
 		ret = recvmsg(clnt_sock, &msg, MSG_SOCK_DEVMEM);
 		if (ret == -1)
 			ERR(PERRN, "failed to recvmsg(): ");
@@ -170,7 +172,7 @@ static void server_dma_start(void)
        				   CTRL_DATA_SIZE);
 		}
 
-		log(INFO, "recvmsg(): %d", ret);
+		log(INFO, "recvmsg ret=%d", ret);
 
 		handle_message(&msg);
 	}

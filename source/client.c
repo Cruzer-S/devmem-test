@@ -173,17 +173,14 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 
 	total = 0;
 	while (total < buffer_size) {
-		if (total + MAX_CHUNK_SIZE >= buffer_size)
-			writesize = buffer_size - total;
-		else
-			writesize = MAX_CHUNK_SIZE;
+		msg.msg_iovlen = ((buffer_size - total) + CHUNK_SIZE - 1) / CHUNK_SIZE;
+		if (msg.msg_iovlen > MAX_IOV)
+			msg.msg_iovlen = MAX_IOV;
 
-		msg.msg_iovlen = (writesize + CHUNK_SIZE - 1) / CHUNK_SIZE;
 		for (int i = 0; i < msg.msg_iovlen; i++) {
 			iovec[i].iov_base = (void *) ((size_t) i * CHUNK_SIZE);
 			iovec[i].iov_len = CHUNK_SIZE;
 		}
-		// iovec[msg.msg_iovlen - 1].iov_len = CHUNK_SIZE;
 
 		msg.msg_iov = iovec;
 
@@ -202,11 +199,11 @@ void client_dma_start(char *address, int port, size_t buffer_size, char *ifname)
 		if (ret < 0)
 			ERR(PERRN, "failed to sendmsg(): ");
 
-		if (ret != writesize)
+		log(INFO, "sendmsg_ret=%d", ret);
+
+		if (ret != (msg.msg_iovlen * CHUNK_SIZE))
 			ERR(ERRN, "did not send all bytes %d (expected: %zd)",
        				  ret, buffer_size);
-
-		log(INFO, "sendmsg(): %d", ret);
 
 		wait_compl(sockfd);
 

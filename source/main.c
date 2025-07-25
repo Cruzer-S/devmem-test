@@ -101,7 +101,6 @@ int main(int argc, char *argv[])
 	parse_argument(parser);
 
 	ifindex = if_nametoindex(interface.s);
-
 	if (!enable_dma.b) {
 		ifindex = 0;
 		queue_start.i = 0;
