@@ -27,6 +27,7 @@
 #include "amdgpu_dmabuf_provider.h"
 
 #define INFO(...) log(INFO, __VA_ARGS__)
+#define WARN(...) log(WARN, __VA_ARGS__)
 #define ERR(...) do {		\
 	log(__VA_ARGS__);	\
 	exit(EXIT_FAILURE);	\
@@ -46,12 +47,9 @@ static size_t total_received;
 static int clnt_sock;
 static struct dmabuf_token token;
 
-static size_t frag_start, frag_end;
 static int dmabuf_id;
 
-size_t aligned, non_aligned;
-
-static const char *cmsg_type_str(int type)
+static const char *C2S(int type)
 {
 	switch (type) {
 	case SCM_DEVMEM_DMABUF:	return "SCM_DEVMEM_DMABUF";
@@ -71,69 +69,36 @@ static void handle_message(struct msghdr *msg, size_t buffer_size)
 	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		if (cmsg->cmsg_type != SCM_DEVMEM_DMABUF) {
-			log(WARN, "can't handle %s message",
-       				  cmsg_type_str(cmsg->cmsg_type));
+			WARN("can't handle %s message", C2S(cmsg->cmsg_type));
 			continue;
 		}
 
 		dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);	
 		if (dmabuf_cmsg->dmabuf_id != dmabuf_id) {
-			log(WARN, "invalid dmabuf_id: %d (expected %d)\n",
-			           dmabuf_cmsg->dmabuf_id, dmabuf_id);
+			WARN("invalid dmabuf_id: %d (expected %d)\n",
+			     dmabuf_cmsg->dmabuf_id, dmabuf_id);
 			continue;
 		}
+		
+		hipMemcpy(
+			membuf->memory + total_received,
+			dmabuf->memory + dmabuf_cmsg->frag_offset,
+			dmabuf_cmsg->frag_size,
+			hipMemcpyDeviceToDevice
+		);
 
-		log(INFO, "received frag_page=%-6llu, in_page_offset=%-6llu, frag_offset=%-10p, frag_size=%6u, token=%-6u, total_received_received=%lu, diff=%u",
-			  dmabuf_cmsg->frag_offset >> PAGE_SHIFT,
-      			  dmabuf_cmsg->frag_offset % getpagesize(),
-      			  dmabuf_cmsg->frag_offset,
-      			  dmabuf_cmsg->frag_size, dmabuf_cmsg->frag_token,
-			  total_received, dmabuf_cmsg->frag_offset - frag_end);
-		if (token.token_count == 0)
-			token.token_start = dmabuf_cmsg->frag_token;
-	
-		if (frag_end == -1) {
-			frag_start = frag_end = dmabuf_cmsg->frag_offset;
-		} else {
-			if (frag_end == dmabuf_cmsg->frag_offset) {
-				aligned++;
-			} else {
-				non_aligned++;
+		token = (struct dmabuf_token) {
+      			.token_start = dmabuf_cmsg->frag_token,
+			.token_count = 1
+		};
+		ret = setsockopt(clnt_sock, SOL_SOCKET,
+			 	 SO_DEVMEM_DONTNEED,
+			 	 &token, sizeof(struct dmabuf_token));
+		if (ret != token.token_count)
+			WARN("failed to setsockopt(): %d\t"
+			     "token_count: %d", ret, token.token_count);
 
-				hipMemcpy(
-					membuf->memory + total_received,
-					dmabuf->memory + frag_start,
-					frag_end - frag_start,
-					hipMemcpyDeviceToDevice
-				);
-				total_received += frag_end - frag_start;
-
-				frag_start = frag_end = dmabuf_cmsg->frag_offset;
-			}
-		}
-
-		frag_end += dmabuf_cmsg->frag_size;
-		token.token_count++;
-	}
-
-	if (token.token_count > 1024 * 9) {
-		size_t total_token = token.token_count;
-		size_t free_token = 0;
-
-		while (total_token > 0) {
-			token.token_count = (total_token > 1024) ? 1024 : total_token;
-			token.token_start = 1 + free_token;
-			ret = setsockopt(clnt_sock, SOL_SOCKET,
-				 SO_DEVMEM_DONTNEED,
-				 &token, sizeof(struct dmabuf_token));
-			if (ret != token.token_count)
-				ERR(PERRN, "failed to setsockopt(): ret: %d\ttoken.token_count: %d\t", ret, token.token_count);
-
-			// INFO("free %d token(s)", ret);
-
-			total_token -= ret;
-			free_token += ret;
-		}
+		total_received += dmabuf_cmsg->frag_size;
 	}
 }
 
@@ -149,6 +114,9 @@ static void server_dma_start(size_t buffer_size)
 
 	dmabuf_id = ncdevmem_get_dmabuf_id(ncdevmem);
 
+	token.token_count = 0;
+	token.token_start = 0;
+
 	while (true) {
 		iovec.iov_base = iobuffer;
 		iovec.iov_len = IOBUFSIZ;
@@ -163,33 +131,7 @@ static void server_dma_start(size_t buffer_size)
 		if (ret == -1)
 			ERR(PERRN, "failed to recvmsg(): ");
 
-		if (ret == 0) {	
-			hipMemcpy(
-				membuf->memory + total_received,
-				dmabuf->memory + frag_start,
-				frag_end - frag_start,
-				hipMemcpyDeviceToDevice
-			);
-			total_received += frag_end - frag_start;
-
-			size_t total_token = token.token_count;
-			size_t free_token = 0;
-
-			while (total_token > 0) {
-				token.token_count = (total_token > 1024) ? 1024 : total_token;
-				token.token_start = 1 + free_token;
-				ret = setsockopt(clnt_sock, SOL_SOCKET,
-					 SO_DEVMEM_DONTNEED,
-					 &token, sizeof(struct dmabuf_token));
-				if (ret != token.token_count)
-					ERR(PERRN, "failed to setsockopt(): ret: %d\ttoken.token_count: %d\t", ret, token.token_count);
-
-				// INFO("free %d token(s)", ret);
-
-				total_token -= ret;
-				free_token += ret;
-			}
-
+		if (ret == 0) {
 			INFO("close from %d", clnt_sock);
 			break;
 		}
@@ -198,8 +140,6 @@ static void server_dma_start(size_t buffer_size)
 			ERR(ERRN, "fatal, cmsg truncated: ctrl_len: %zu ",
        				   CTRL_DATA_SIZE);
 		}
-
-		// log(INFO, "recvmsg ret=%d", ret);
 
 		handle_message(&msg, buffer_size);
 	}
@@ -242,11 +182,9 @@ void server_start(size_t buffer_size, bool is_dma)
 	if (clnt_sock == -1)
 		ERR(PERRN, "failed to accept(): ");
 
-	log(INFO, "accept client: %d", clnt_sock);
+	INFO("accept client: %d", clnt_sock);
 
-	aligned = non_aligned = 0;
 	total_received = 0;
-	frag_end = -1;
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	if (is_dma)
@@ -258,9 +196,8 @@ void server_start(size_t buffer_size, bool is_dma)
 	mib = total_received / (1024.0 * 1024.0);
 	seconds = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	log(INFO, "alinged: %zu\tnon-aligned: %zu", aligned, non_aligned);
-	log(INFO, "transferred: %.2f MiB in %.3f seconds", mib, seconds);
-	log(INFO, "speed: %.2f Gbps", (total_received * 8.0) / (1e9 * seconds));
+	INFO("transferred: %.2f MiB in %.3f seconds", mib, seconds);
+	INFO("speed: %.2f Gbps", (total_received * 8.0) / (1e9 * seconds));
 
 	close(clnt_sock);
 

@@ -88,13 +88,13 @@ int main(int argc, char *argv[])
 	else
 		socket_create(clnt_addr.s, clnt_port.i, server.b);
 
-	if (server.b)	server_start(BUFFER_SIZE / 2, enable_dma.b);
-	else		client_start(serv_addr.s, serv_port.i, enable_dma.b, BUFFER_SIZE / 2, interface.s);
+	if (server.b)	server_start(BUFFER_SIZE, enable_dma.b);
+	else		client_start(serv_addr.s, serv_port.i, enable_dma.b, BUFFER_SIZE, interface.s);
 
 	socket_destroy();
 
 	if (server.b) {
-		if (memory_validate(BUFFER_SIZE / 2)) {
+		if (memory_validate(BUFFER_SIZE)) {
 			log(INFO, "memory_validate(): true");
 		} else {
 			log(WARN, "memory_validate(): false");
