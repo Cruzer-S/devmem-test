@@ -17,7 +17,7 @@
 #define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
 
 #define ERR(...) do {		\
-	log(__VA_ARGS__);	\
+	log(PERRN, __VA_ARGS__);\
 	exit(EXIT_FAILURE);	\
 } while (true)
 
@@ -47,7 +47,7 @@ void parse_argument(ArgumentParser parser)
 	enable_dma.b = false;
 
 	if (argument_parser_parse(parser) == -1)
-		log(PERRN, "failed to argument_parser_parse(): ");
+		ERR("failed to argument_parser_parse(): ");
 }
 
 void dump_args(void)
@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
 
 	parser = argument_parser_create(argv);
 	if (parser == NULL)
-		log(PERRN, "failed to argument_parser_create(): ");
+		ERR("failed to argument_parser_create(): ");
 
 	parse_argument(parser);
 
