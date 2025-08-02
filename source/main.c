@@ -3,10 +3,13 @@
 #include <string.h>		// strerror()
 #include <errno.h>		// errno
 
+#include <arpa/inet.h>		// struct sockaddr_in
+
 #include "logger.h"		// log()
 #include "argument-parser.h"	// argument_parser...()
 #include "memory_provider.h"
 
+#include "client.h"
 #include "socket.h"
 #include "server.h"
 
@@ -19,20 +22,24 @@
 #define WARN(...) log(WARN, __VA_ARGS__)
 
 struct {
+	char *bind_address;
+	int bind_port;
+
 	char *address;
 	int port;
+
 	int buffer_size;
 	bool server;
 
-	struct argument_info info[4];
+	struct argument_info info[6];
 } arguments = { .info = {
 	{
-		"address", "a", "IP address",
+		"bind-address", "a", "IP address to bind",
 		(ArgumentValue *) &arguments.address,
 		ARGUMENT_PARSER_TYPE_STRING | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
 	{
-		"port", "p", "Port number",
+		"bind-port", "p", "Port number to bind",
 		(ArgumentValue *) &arguments.port,
 		ARGUMENT_PARSER_TYPE_INTEGER | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
@@ -45,6 +52,16 @@ struct {
 		"server", "s", "run as server (if not set, run as client)",
 		(ArgumentValue *) &arguments.server,
 		ARGUMENT_PARSER_TYPE_FLAG
+	},
+	{
+		"address", "A", "IP address to connect",
+		(ArgumentValue *) &arguments.address,
+		ARGUMENT_PARSER_TYPE_STRING
+	},
+	{
+		"port", "P", "Port number to connect",
+		(ArgumentValue *) &arguments.port,
+		ARGUMENT_PARSER_TYPE_INTEGER
 	}
 }};
 
@@ -63,10 +80,16 @@ static void parse_argument(int argc, char *argv[])
 		ERROR("failed to argument_parser_parse(): %s",
       		    argument_parser_get_error(parser));
 
-	INFO("address: %s", arguments.address);
-	INFO("port: %d", arguments.port);
+	INFO("bind-address: %s", arguments.bind_address);
+	INFO("bind-port: %d", arguments.bind_port);
+
 	INFO("buffer_size: %d", arguments.buffer_size);
 	INFO("server: %s", arguments.server ? "Server" : "Client");
+
+	if (!arguments.server) {
+		INFO("connect-address: %s", arguments.address);
+		INFO("connect-port: %d", arguments.port);
+	}
 
 	argument_parser_destroy(parser);
 }
@@ -85,9 +108,26 @@ static void do_server(int sockfd, Memory context)
 	server_cleanup(server);
 }
 
-static void do_client(void)
+static void do_client(int sockfd, Memory context)
 {
+	Client client;
+	struct sockaddr_in sockaddr;
+	socklen_t addrlen;
 
+	client = client_setup(sockfd, context);
+	if (client == NULL)
+		ERROR("failed to client_setup(): %s", client_get_error());
+
+	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_addr.s_addr = inet_addr(arguments.address);
+	sockaddr.sin_port = htons(arguments.port);
+
+	if (client_run_as_tcp(client, (struct sockaddr *) &sockaddr,
+		       	      sizeof(struct sockaddr_in)) == -1)
+		ERROR("failed to client_run_as_tcp(): %s", client_get_error());
+
+	client_cleanup(client);
 }
 
 int main(int argc, char *argv[])
@@ -105,7 +145,7 @@ int main(int argc, char *argv[])
 
 	parse_argument(argc, argv);
 
-	sockfd = socket_create(arguments.address, arguments.port);
+	sockfd = socket_create(arguments.bind_address, arguments.bind_port);
 	if (sockfd == -1)
 		ERROR("failed to socket_create(): %s", socket_get_error());
 

@@ -50,6 +50,61 @@ Server server_setup(int sockfd, Memory context)
 	return server;
 }
 
+int server_run_as_dma(Server server)
+{
+	int clnt_fd;
+	size_t recvlen;
+	char *ubuffer;
+	size_t size;
+	Memory context;
+
+	size = server->size;
+	context = server->context;
+
+	ubuffer = malloc(size);
+	if (ubuffer == NULL) {
+		ERROR("failed to malloc(): %s", strerror(errno));
+		goto RETURN_ERROR;
+	}
+
+	clnt_fd = accept(server->sockfd, NULL, 0);
+	if (clnt_fd == -1) {
+		ERROR("failed to accept(): %s", strerror(errno));
+		goto FREE_BUFFER;
+	}
+
+	recvlen = 0;
+	while (true) {
+		int ret = recv(clnt_fd, ubuffer, size - recvlen, 0);
+		if (ret == -1) {
+			ERROR("failed to recv(): %s", strerror(errno));
+			goto CLOSE_CLNT_FD;
+		}
+
+		if (ret == 0)
+			break;
+
+		ret = provider->memcpy_to(context, ubuffer, recvlen, ret);
+		if (ret == -1) {
+			ERROR("failed to amdgpu_memory_provider->memcpy_to(): "
+	 		      "%s", provider->get_error());
+			goto CLOSE_CLNT_FD;
+		}
+
+		recvlen += ret;
+	}
+
+	close(clnt_fd);
+	free(ubuffer);
+
+	return 0;
+
+CLOSE_CLNT_FD:	close(clnt_fd);
+FREE_BUFFER:	free(ubuffer);
+RETURN_ERROR:	return -1;
+}
+
+
 int server_run_as_tcp(Server server)
 {
 	int clnt_fd;
