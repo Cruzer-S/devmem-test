@@ -15,4 +15,6 @@ int server_run_as_dma(Server );
 
 void server_cleanup(Server );
 
+char *server_get_error(void);
+
 #endif

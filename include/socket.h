@@ -3,15 +3,8 @@
 
 #include <stdbool.h>
 
-extern char *address;
-extern int port;
-extern int sockfd;
-
-void socket_create(char *address, int port, bool is_server);
-
-void socket_connect(char *address, int port);
-int socket_accept(void);
-
-void socket_destroy(void);
+int socket_create(char *address, int port);
+void socket_destroy(int sockfd);
+char *socket_get_error(void);
 
 #endif

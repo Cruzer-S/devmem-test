@@ -1,100 +1,70 @@
 #include "socket.h"
 
-#include <stdlib.h>
-#include <fcntl.h>
-#include <string.h>
-#include <stdbool.h>
+#include <stdio.h>		// sprintf(), BUFSIZ
+#include <string.h>		// memset(), strerror()
+#include <errno.h>		// errno
 
-#include <unistd.h>
+#include <unistd.h>		// close()
 
-#include <arpa/inet.h>
+#include <sys/socket.h>		// socket(), bind(), setsockopt() ...
+#include <arpa/inet.h>		// struct sockaddr_in
 
-#include "logger.h"
+#define ERROR(...) do {				\
+	snprintf(error, BUFSIZ, __VA_ARGS__);	\
+	return -1;				\
+} while (false)
 
-#define ERR(...) do {		\
-	log(__VA_ARGS__);	\
-	exit(EXIT_FAILURE);	\
-} while (true)
+static char error[BUFSIZ];
 
-#define BACKLOG		15
-
-static struct sockaddr_in sockaddr;
-int sockfd;
-
-static void socket_reuseaddr(int fd)
+static int socket_reuseaddr(int fd)
 {
 	int ret, opt;
 
 	opt = 1;
 	ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	if (ret == -1)
-		ERR(PERRN, "failed to setsockopt(): ");
+		ERROR("failed to setsockopt(): %s", strerror(errno));
 
 	opt = 1;
 	ret = setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 	if (ret == -1)
-		ERR(PERRN, "failed to setsockup(): ");
+		ERROR("failed to setsockopt(): %s", strerror(errno));
+
+	return 0;
 }
 
-static void socket_nonblock(int fd)
+int socket_create(char *address, int port)
 {
-	int flags;
-
-	flags = fcntl(fd, F_GETFL, 0);
-	if (flags == -1)
-		ERR(PERRN, "failed to fcntl(): ");
-
-	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
-		ERR(PERRN, "failed to fcntl(): ");
-}
-
-void socket_create(char *address, int port, bool is_server)
-{
+	struct sockaddr_in sockaddr;
+	int sockfd;
 	int ret;
 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd == -1)
-		ERR(PERRN, "failed to socket(): ");
+		ERROR("failed to socket(): %s", strerror(errno));
 
 	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
 	sockaddr.sin_family = AF_INET;
 	sockaddr.sin_port = htons(port);
 	sockaddr.sin_addr.s_addr = inet_addr(address);
 
-	socket_reuseaddr(sockfd);
+	if (socket_reuseaddr(sockfd) == -1)
+		return -1;
 
 	ret = bind(sockfd, (struct sockaddr *) &sockaddr,
 		   sizeof(struct sockaddr_in));
 	if (ret == -1)
-		ERR(PERRN, "failed to bind(): ");
+		ERROR("failed to bind(): %s", strerror(errno));
 
-	if (is_server) {
-		if (listen(sockfd, BACKLOG) == -1)
-			ERR(PERRN, "failed to listen(): ");
-	}
+	return sockfd;
 }
 
-void socket_connect(char *address, int port)
+char *socket_get_error(void)
 {
-	int ret;
-
-	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
-	sockaddr.sin_family = AF_INET;
-	sockaddr.sin_port = htons(port);
-	sockaddr.sin_addr.s_addr = inet_addr(address);
-
-	ret = connect(sockfd, (struct sockaddr *) &sockaddr,
-		      sizeof(struct sockaddr_in));
-	if (ret == -1)
-		ERR(PERRN, "failed to connect(): ");
+	return error;
 }
 
-int socket_accept(void)
-{
-	return accept(sockfd, NULL, 0);
-}
-
-void socket_destroy(void)
+void socket_destroy(int sockfd)
 {
 	close(sockfd);
 }

@@ -1,7 +1,10 @@
 #include "server.h"
 
+#include <stdio.h>	// BUFSIZ
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>	// strerror()
+#include <errno.h>	// errno
 
 #include <unistd.h>
 
@@ -14,13 +17,18 @@ struct server {
 	struct amdgpu_membuf_buffer *buffer;
 };
 
+static char error[BUFSIZ];
+
 Server server_setup(int sockfd, struct amdgpu_membuf_buffer *buffer)
 {
 	Server server;
 
 	server = malloc(sizeof(struct server));
-	if (server == NULL)
+	if (server == NULL) {
+		snprintf(error, BUFSIZ,
+	   		 "failed to malloc(): %s", strerror(errno));
 		return NULL;
+	}
 
 	server->sockfd = sockfd;
 	server->buffer = buffer;
@@ -74,4 +82,9 @@ RETURN_ERROR:	return -1;
 void server_cleanup(Server server)
 {
 	free(server);
+}
+
+char *server_get_error(void)
+{
+	return error;
 }

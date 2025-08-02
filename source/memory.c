@@ -38,7 +38,7 @@ void memory_setup(size_t size, int ifindex, int queue, bool is_server)
 		if (is_server)
 			ncdevmem = ncdevmem_setup(ifindex, queue, 1, dmabuf->fd);
 		else
-			ncdevmem = ncdevmem_setup_tx(ifindex, queue, 1, dmabuf->fd);
+			ncdevmem = ncdevmem_setup(ifindex, queue, 1, dmabuf->fd);
 
 		if (ncdevmem == NULL)
 			ERR(ERRN, "failed to ncdevmem_setup(): %s",
