@@ -15,16 +15,17 @@
 #include "client.h"
 #include "argument-parser.h"
 
-#define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
-
 #define PAGE_SIZE	4096
 #define NUM_PAGES	16000
 #define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
 
-#define ERR(...) do {		\
-	log(PERRN, __VA_ARGS__);\
-	exit(EXIT_FAILURE);	\
+#define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
+#define ERROR(...) do {			\
+	log(PERRN, __VA_ARGS__);	\
+	exit(EXIT_FAILURE);		\
 } while (true)
+#define INFO(...) log(INFO, __VA_ARGS__)
+#define WARN(...) log(WARN, __VA_ARGS__)
 
 char *interface;
 char *serv_addr, *clnt_addr;
@@ -49,7 +50,7 @@ struct argument_info arguments[] = {
 		(ArgumentValue *) &server, ARGUMENT_PARSER_TYPE_FLAG
 	}, {	"queue-start", "q", "start index of NIC queue",
 		(ArgumentValue *) &queue_start, ARGUMENT_PARSER_TYPE_INTEGER
-	}, {	"num-queue", "n", "number of queue",
+	}, {	"num-queue", "n", "number of NIC queue",
 		(ArgumentValue *) &num_queue, ARGUMENT_PARSER_TYPE_INTEGER
 	}
 };
@@ -60,7 +61,7 @@ void parse_argument(ArgumentParser parser)
 		argument_parser_add(parser, &arguments[i]);
 
 	if (argument_parser_parse(parser) == -1)
-		ERR("failed to argument_parser_parse(): %s",
+		ERROR("failed to argument_parser_parse(): %s",
       		    argument_parser_get_error(parser));
 }
 
@@ -77,7 +78,7 @@ int main(int argc, char *argv[])
 
 	parser = argument_parser_create(argc, argv);
 	if (parser == NULL)
-		ERR("failed to argument_parser_create(): ");
+		ERROR("failed to argument_parser_create(): ");
 
 	parse_argument(parser);
 
@@ -100,9 +101,9 @@ int main(int argc, char *argv[])
 
 	if (server) {
 		if (memory_validate(BUFFER_SIZE)) {
-			log(INFO, "memory_validate(): true");
+			INFO("memory_validate(): true");
 		} else {
-			log(WARN, "memory_validate(): false");
+			WARN("memory_validate(): false");
 		}
 	}
 
