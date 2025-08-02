@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
 #include <stdlib.h>
 
 #include <unistd.h>
@@ -12,6 +15,8 @@
 #include "client.h"
 #include "argument-parser.h"
 
+#define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
+
 #define PAGE_SIZE	4096
 #define NUM_PAGES	16000
 #define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
@@ -21,33 +26,42 @@
 	exit(EXIT_FAILURE);	\
 } while (true)
 
-#define DEFINE_ARGUMENT(PARSER, VALUE, NAME, T)			\
-	argument_parser_add(PARSER, NAME, NAME, NAME, 		\
-		     	    VALUE, ARGUMENT_PARSER_TYPE_##T)
+char *interface;
+char *serv_addr, *clnt_addr;
+int serv_port, clnt_port;
+bool enable_dma, server;
+int queue_start, num_queue;
 
-ArgumentValue interface;
-ArgumentValue serv_addr, serv_port;
-ArgumentValue clnt_addr, clnt_port;
-ArgumentValue enable_dma, server;
-ArgumentValue queue_start, num_queue;
+struct argument_info arguments[] = {
+	{ 	"interface", "i", "network interface",
+		(ArgumentValue *) &interface, ARGUMENT_PARSER_TYPE_STRING
+	}, {	"serv-addr", "s", "server address",
+		(ArgumentValue *) &serv_addr, ARGUMENT_PARSER_TYPE_STRING
+	}, {	"clnt-addr", "c", "client address",
+		(ArgumentValue *) &clnt_addr, ARGUMENT_PARSER_TYPE_STRING
+	}, {	"serv-port", "P", "server port",
+		(ArgumentValue *) &clnt_addr, ARGUMENT_PARSER_TYPE_INTEGER
+	}, {	"clnt-port", "p", "client port",
+		(ArgumentValue *) &clnt_port, ARGUMENT_PARSER_TYPE_INTEGER
+	}, {	"enable-dma", "D", "enable dma",
+		(ArgumentValue *) &enable_dma, ARGUMENT_PARSER_TYPE_FLAG
+	}, {	"server", "S", "run as server",
+		(ArgumentValue *) &server, ARGUMENT_PARSER_TYPE_FLAG
+	}, {	"queue-start", "q", "start index of NIC queue",
+		(ArgumentValue *) &queue_start, ARGUMENT_PARSER_TYPE_INTEGER
+	}, {	"num-queue", "n", "number of queue",
+		(ArgumentValue *) &num_queue, ARGUMENT_PARSER_TYPE_INTEGER
+	}
+};
 
 void parse_argument(ArgumentParser parser)
 {
-	DEFINE_ARGUMENT(parser, &interface, "interface", STRING);
-	DEFINE_ARGUMENT(parser, &serv_addr, "serv-addr", STRING);
-	DEFINE_ARGUMENT(parser, &serv_port, "serv-port", INTEGER);
-	DEFINE_ARGUMENT(parser, &clnt_addr, "clnt-addr", STRING);
-	DEFINE_ARGUMENT(parser, &clnt_port, "clnt-port", INTEGER);
-	DEFINE_ARGUMENT(parser, &enable_dma, "enable-dma", BOOLEAN);
-	DEFINE_ARGUMENT(parser, &server, "server", BOOLEAN);
-	DEFINE_ARGUMENT(parser, &queue_start, "queue-start", INTEGER);
-	DEFINE_ARGUMENT(parser, &num_queue, "num-queue", INTEGER);
-
-	server.b = false;
-	enable_dma.b = false;
+	for (int i = 0; i  < ARRAY_SIZE(arguments); i++)
+		argument_parser_add(parser, &arguments[i]);
 
 	if (argument_parser_parse(parser) == -1)
-		ERR("failed to argument_parser_parse(): ");
+		ERR("failed to argument_parser_parse(): %s",
+      		    argument_parser_get_error(parser));
 }
 
 int main(int argc, char *argv[])
@@ -55,32 +69,36 @@ int main(int argc, char *argv[])
 	ArgumentParser parser;
 	int ifindex;
 
-	logger_initialize();
+	if ( !logger_initialize() ) {
+		fprintf(stderr, "failed to logger_initialize(): %s",
+	  		strerror(errno));
+		exit(EXIT_FAILURE);
+	}
 
-	parser = argument_parser_create(argv);
+	parser = argument_parser_create(argc, argv);
 	if (parser == NULL)
 		ERR("failed to argument_parser_create(): ");
 
 	parse_argument(parser);
 
-	ifindex = if_nametoindex(interface.s);
-	if (!enable_dma.b) {
+	ifindex = if_nametoindex(interface);
+	if (!enable_dma) {
 		ifindex = 0;
-		queue_start.i = 0;
+		queue_start = 0;
 	}
 
-	memory_setup(BUFFER_SIZE, ifindex, queue_start.i, server.b);
-	if (server.b)
-		socket_create(serv_addr.s, serv_port.i, server.b);
+	memory_setup(BUFFER_SIZE, ifindex, queue_start, server);
+	if (server)
+		socket_create(serv_addr, serv_port, server);
 	else
-		socket_create(clnt_addr.s, clnt_port.i, server.b);
+		socket_create(clnt_addr, clnt_port, server);
 
-	if (server.b)	server_start(BUFFER_SIZE, enable_dma.b);
-	else		client_start(serv_addr.s, serv_port.i, enable_dma.b, BUFFER_SIZE, interface.s);
+	if (server)	server_start(BUFFER_SIZE, enable_dma);
+	else		client_start(serv_addr, serv_port, enable_dma, BUFFER_SIZE, interface);
 
 	socket_destroy();
 
-	if (server.b) {
+	if (server) {
 		if (memory_validate(BUFFER_SIZE)) {
 			log(INFO, "memory_validate(): true");
 		} else {
