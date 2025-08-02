@@ -15,10 +15,6 @@
 #include "client.h"
 #include "argument-parser.h"
 
-#define PAGE_SIZE	4096
-#define NUM_PAGES	16000
-#define BUFFER_SIZE	(PAGE_SIZE * NUM_PAGES)
-
 #define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
 #define ERROR(...) do {			\
 	log(PERRN, __VA_ARGS__);	\
@@ -32,6 +28,7 @@ char *serv_addr, *clnt_addr;
 int serv_port, clnt_port;
 bool enable_dma, server;
 int queue_start, num_queue;
+int frag_size, buffer_size;
 
 struct argument_info arguments[] = {
 	{ 	"interface", "i", "network interface",
@@ -52,6 +49,10 @@ struct argument_info arguments[] = {
 		(ArgumentValue *) &queue_start, ARGUMENT_PARSER_TYPE_INTEGER
 	}, {	"num-queue", "n", "number of NIC queue",
 		(ArgumentValue *) &num_queue, ARGUMENT_PARSER_TYPE_INTEGER
+	}, {	"frag-size", "f", "size of fragment",
+		(ArgumentValue *) &frag_size, ARGUMENT_PARSER_TYPE_INTEGER
+	}, {	"buffer-size", "b", "size of buffer",
+		(ArgumentValue *) &buffer_size, ARGUMENT_PARSER_TYPE_INTEGER
 	}
 };
 
@@ -88,19 +89,19 @@ int main(int argc, char *argv[])
 		queue_start = 0;
 	}
 
-	memory_setup(BUFFER_SIZE, ifindex, queue_start, server);
+	memory_setup(buffer_size, ifindex, queue_start, server);
 	if (server)
 		socket_create(serv_addr, serv_port, server);
 	else
 		socket_create(clnt_addr, clnt_port, server);
 
-	if (server)	server_start(BUFFER_SIZE, enable_dma);
-	else		client_start(serv_addr, serv_port, enable_dma, BUFFER_SIZE, interface);
+	if (server)	server_start(buffer_size, enable_dma);
+	else		client_start(serv_addr, serv_port, enable_dma, buffer_size, interface);
 
 	socket_destroy();
 
 	if (server) {
-		if (memory_validate(BUFFER_SIZE)) {
+		if (memory_validate(buffer_size)) {
 			INFO("memory_validate(): true");
 		} else {
 			WARN("memory_validate(): false");
