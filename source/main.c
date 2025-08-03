@@ -35,12 +35,12 @@ struct {
 } arguments = { .info = {
 	{
 		"bind-address", "a", "IP address to bind",
-		(ArgumentValue *) &arguments.address,
+		(ArgumentValue *) &arguments.bind_address,
 		ARGUMENT_PARSER_TYPE_STRING | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
 	{
 		"bind-port", "p", "Port number to bind",
-		(ArgumentValue *) &arguments.port,
+		(ArgumentValue *) &arguments.bind_port,
 		ARGUMENT_PARSER_TYPE_INTEGER | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
 	{
@@ -65,14 +65,8 @@ struct {
 	}
 }};
 
-static void parse_argument(int argc, char *argv[])
+static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 {
-	ArgumentParser parser;
-
-	parser = argument_parser_create(argc, argv);
-	if (parser == NULL)
-		ERROR("failed to argument_parser_create()");
-
 	for (int i = 0; i  < ARRAY_SIZE(arguments.info); i++)
 		argument_parser_add(parser, arguments.info + i);
 
@@ -90,21 +84,22 @@ static void parse_argument(int argc, char *argv[])
 		INFO("connect-address: %s", arguments.address);
 		INFO("connect-port: %d", arguments.port);
 	}
-
-	argument_parser_destroy(parser);
 }
 
 static void do_server(int sockfd, Memory context)
 {
 	Server server;
 
+	INFO("setup server");
 	server = server_setup(sockfd, context);
 	if (server == NULL)
 		ERROR("failed to server_setup(): %s", server_get_error());
 
+	INFO("start server");
 	if (server_run_as_tcp(server) == -1)
 		ERROR("failed to server_run_as_tcp(): %s", server_get_error());
 
+	INFO("cleanup server");
 	server_cleanup(server);
 }
 
@@ -114,6 +109,7 @@ static void do_client(int sockfd, Memory context)
 	struct sockaddr_in sockaddr;
 	socklen_t addrlen;
 
+	INFO("setup client");
 	client = client_setup(sockfd, context);
 	if (client == NULL)
 		ERROR("failed to client_setup(): %s", client_get_error());
@@ -123,16 +119,20 @@ static void do_client(int sockfd, Memory context)
 	sockaddr.sin_addr.s_addr = inet_addr(arguments.address);
 	sockaddr.sin_port = htons(arguments.port);
 
-	if (client_run_as_tcp(client, (struct sockaddr *) &sockaddr,
+	INFO("start client");
+	if (client_run_as_tcp(client,
+		       	      (struct sockaddr *) &sockaddr,
 		       	      sizeof(struct sockaddr_in)) == -1)
 		ERROR("failed to client_run_as_tcp(): %s", client_get_error());
 
+	INFO("cleanup client");
 	client_cleanup(client);
 }
 
 int main(int argc, char *argv[])
 {
 	struct memory_provider *provider;
+	ArgumentParser parser;
 
 	Memory context;
 	int sockfd;
@@ -143,14 +143,22 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	parse_argument(argc, argv);
+	INFO("create argument parser");
+	parser = argument_parser_create(argc, argv);
+	if (parser == NULL)
+		ERROR("failed to argument_parser_create()");
 
+	parse_argument(parser, argc, argv);
+
+	INFO("create socket: %s:%d",
+      	     arguments.bind_address, arguments.bind_port);
 	sockfd = socket_create(arguments.bind_address, arguments.bind_port);
 	if (sockfd == -1)
 		ERROR("failed to socket_create(): %s", socket_get_error());
 
 	provider = &amdgpu_memory_provider;
 
+	INFO("allocate GPU buffer: size %d", arguments.buffer_size);
 	context = provider->alloc(arguments.buffer_size);
 	if (context == NULL)
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
@@ -159,14 +167,18 @@ int main(int argc, char *argv[])
 	if (arguments.server) {
 		do_server(sockfd, context);
 	} else {
-		do_client();
+		do_client(sockfd, context);
 	}
 
+	INFO("free GPU buffer");
 	if (provider->free(context) == -1)
 		ERROR("failed to amdgpu_memory_provider->free(): %s",
 		      provider->get_error());
 
+	INFO("destroy socket");
 	socket_destroy(sockfd);
+
+	argument_parser_destroy(parser);
 
 	logger_destroy();
 

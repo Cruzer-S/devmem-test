@@ -9,6 +9,8 @@
 #include <stddef.h>	// size_t
 #include <stdbool.h>	// false
 
+#include <unistd.h>	// close()
+
 #include <sys/socket.h>	// connect()
 #include <arpa/inet.h>	// struct sockaddr_in
 
@@ -67,7 +69,7 @@ int client_run_as_tcp(Client client,
 	}
 
 	sendlen = 0;
-	while (true) {
+	while (sendlen < size) {
 		provider->memcpy_from(
 			ubuffer, context, sendlen, size - sendlen
 		);
@@ -75,28 +77,16 @@ int client_run_as_tcp(Client client,
 		ret = send(client->sockfd, ubuffer, size - sendlen, 0);
 		if (ret == -1) {
 			ERROR("failed to send(): %s", strerror(errno));
-			goto CLOSE_CLNT_FD;
-		}
-
-		if (ret == 0)
-			break;
-
-		ret = provider->memcpy_to(context, ubuffer, sendlen, ret);
-		if (ret == -1) {
-			ERROR("failed to amdgpu_memory_provider->memcpy_to(): "
-	 		      "%s", provider->get_error());
-			goto CLOSE_CLNT_FD;
+			goto FREE_BUFFER;
 		}
 
 		sendlen += ret;
 	}
 
-	close(clnt_fd);
 	free(ubuffer);
 
 	return 0;
 
-CLOSE_CLNT_FD:	close(clnt_fd);
 FREE_BUFFER:	free(ubuffer);
 RETURN_ERROR:	return -1;
 }
