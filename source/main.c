@@ -107,7 +107,6 @@ static void do_client(int sockfd, Memory context)
 {
 	Client client;
 	struct sockaddr_in sockaddr;
-	socklen_t addrlen;
 
 	INFO("setup client");
 	client = client_setup(sockfd, context);

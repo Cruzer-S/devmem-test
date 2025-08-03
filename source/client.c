@@ -70,9 +70,13 @@ int client_run_as_tcp(Client client,
 
 	sendlen = 0;
 	while (sendlen < size) {
-		provider->memcpy_from(
+		ret = provider->memcpy_from(
 			ubuffer, context, sendlen, size - sendlen
 		);
+		if (ret == -1)
+			ERROR("failed to "
+	 		      "amdgpu_memory_provider->memcpy_from(): %s",
+	 		      provider->get_error());
 
 		ret = send(client->sockfd, ubuffer, size - sendlen, 0);
 		if (ret == -1) {
