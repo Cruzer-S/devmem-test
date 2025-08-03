@@ -3,14 +3,13 @@
 
 #include "memory_provider.h"
 
-#include <arpa/inet.h>	// struct sockaddr, socklen_t 
-//
 typedef struct client *Client;
 
-Client client_setup(int sockfd, Memory context);
+Client client_setup(Memory context, char *address, int port);
 
-int client_run_as_tcp(Client client, struct sockaddr *, socklen_t );
-void client_cleanup(Client client);
+int client_run_as_tcp(Client , char *address, int port);
+
+void client_cleanup(Client );
 
 char *client_get_error(void);
 

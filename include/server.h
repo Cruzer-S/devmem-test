@@ -8,7 +8,7 @@
 
 typedef struct server *Server;
 
-Server server_setup(int sockfd, Memory );
+Server server_setup(Memory , char *address, int port);
 
 int server_run_as_tcp(Server );
 int server_run_as_dma(Server );

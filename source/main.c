@@ -3,23 +3,27 @@
 #include <string.h>		// strerror()
 #include <errno.h>		// errno
 
-#include <arpa/inet.h>		// struct sockaddr_in
+#include <sys/time.h>
 
 #include "logger.h"		// log()
 #include "argument-parser.h"	// argument_parser...()
 #include "memory_provider.h"
 
 #include "client.h"
-#include "socket.h"
 #include "server.h"
 
 #define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
+#define BYTES_TO_GBPS(BYTES, SECONDS)				\
+	(((double)(BYTES) * 8.0) / ((double)(SECONDS) * 1e9))
+#define GET_ELAPSED(START, END) 
 #define ERROR(...) do {			\
 	log(ERRN, __VA_ARGS__);		\
 	exit(EXIT_FAILURE);		\
 } while (true)
 #define INFO(...) log(INFO, __VA_ARGS__)
 #define WARN(...) log(WARN, __VA_ARGS__)
+
+#define SEED	10
 
 struct {
 	char *bind_address;
@@ -31,8 +35,10 @@ struct {
 	int buffer_size;
 	bool server;
 
-	struct argument_info info[6];
-} arguments = { .info = {
+	bool do_validation;
+
+	struct argument_info info[7];
+} static arguments = { .info = {
 	{
 		"bind-address", "a", "IP address to bind",
 		(ArgumentValue *) &arguments.bind_address,
@@ -49,7 +55,7 @@ struct {
 		ARGUMENT_PARSER_TYPE_INTEGER | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
 	{
-		"server", "s", "run as server (if not set, run as client)",
+		"server", "s", "Run as server (if not set, run as client)",
 		(ArgumentValue *) &arguments.server,
 		ARGUMENT_PARSER_TYPE_FLAG
 	},
@@ -62,8 +68,70 @@ struct {
 		"port", "P", "Port number to connect",
 		(ArgumentValue *) &arguments.port,
 		ARGUMENT_PARSER_TYPE_INTEGER
+	},
+	{
+		"validate", "v", "Do memory validation",
+		(ArgumentValue *) &arguments.do_validation,
+		ARGUMENT_PARSER_TYPE_FLAG
 	}
 }};
+
+static struct memory_provider *provider = &amdgpu_memory_provider;
+
+static void initialize_memory(Memory memory)
+{
+	char *buffer;
+	size_t size;
+	int ret;
+
+	size = provider->get_size(memory);
+
+	buffer = malloc(size);
+	if (buffer == NULL)
+		ERROR("failed to malloc(): %s", strerror(errno));
+
+	for (size_t i = 0; i < size; i++)
+		buffer[i] = i % SEED;
+
+	ret = provider->memcpy_to(memory, buffer, 0, size);
+	if (ret == -1)
+		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
+		      provider->get_error());
+
+	free(buffer);
+}
+
+static void validate_memory(Memory memory)
+{
+	char *buffer;
+	size_t size;
+	int count;
+
+	size = provider->get_size(memory);
+	buffer = malloc(size);
+	if (buffer == NULL)
+		ERROR("failed to malloc(): %s", strerror(errno));
+
+	if (provider->memcpy_from(buffer, memory, 0, size) == -1)
+		ERROR("failed to amdgpu_memory_provider->memcpy_from(): %s",
+		      provider->get_error());
+
+	count = 0;
+	for (size_t i = 0; i < size; i++) {
+		if (buffer[i] != i % SEED) {
+			WARN("memory invalid at %zu: expected %d, but %d",
+				i, i % SEED, buffer[i]
+			);
+			count++;
+		}
+
+		if (count >= 10)
+			ERROR("failed to validate_memory()");
+	}
+
+	free(buffer);
+}
+
 
 static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 {
@@ -86,43 +154,77 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 	}
 }
 
-static void do_server(int sockfd, Memory context)
+static void do_server(Memory context, char *address, int port)
 {
 	Server server;
+	struct timeval start, end;
+	long seconds, micros;
+	double elapsed;
 
 	INFO("setup server");
-	server = server_setup(sockfd, context);
+	server = server_setup(context, address, port);
 	if (server == NULL)
 		ERROR("failed to server_setup(): %s", server_get_error());
 
 	INFO("start server");
-	if (server_run_as_tcp(server) == -1)
-		ERROR("failed to server_run_as_tcp(): %s", server_get_error());
+
+	gettimeofday(&start, NULL);
+	for (int i = 0; i < 1024; i++) {
+		if (server_run_as_tcp(server) == -1)
+			ERROR("failed to server_run_as_tcp(): %s",
+			      server_get_error());
+
+		if (arguments.do_validation)
+			validate_memory(context);
+	}
+	gettimeofday(&end, NULL);
+
+	seconds = end.tv_sec - start.tv_sec;
+	micros = end.tv_usec - start.tv_usec;
+	elapsed = seconds + micros * 1e-6;
+	INFO("Elapsed time: %.6f seconds", elapsed);
+	INFO("Total recieved: %g", 1024.0 * arguments.buffer_size);
+	INFO("Bandwidth: %.6f Gbps",
+      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size, elapsed));
 
 	INFO("cleanup server");
 	server_cleanup(server);
 }
 
-static void do_client(int sockfd, Memory context)
+static void do_client(Memory context,
+		      char *bind_addr, int bind_port,
+		      char *address, int port)
 {
 	Client client;
-	struct sockaddr_in sockaddr;
+	struct timeval start, end;
+	long seconds, micros;
+	double elapsed;
 
 	INFO("setup client");
-	client = client_setup(sockfd, context);
+	client = client_setup(context, bind_addr, bind_port);
 	if (client == NULL)
 		ERROR("failed to client_setup(): %s", client_get_error());
 
-	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
-	sockaddr.sin_family = AF_INET;
-	sockaddr.sin_addr.s_addr = inet_addr(arguments.address);
-	sockaddr.sin_port = htons(arguments.port);
+	if (arguments.do_validation)
+		initialize_memory(context);
 
 	INFO("start client");
-	if (client_run_as_tcp(client,
-		       	      (struct sockaddr *) &sockaddr,
-		       	      sizeof(struct sockaddr_in)) == -1)
-		ERROR("failed to client_run_as_tcp(): %s", client_get_error());
+
+	gettimeofday(&start, NULL);
+	for (int i = 0; i < 1024; i++) {
+		if (client_run_as_tcp(client, address, port) == -1)
+			ERROR("failed to client_run_as_tcp(): %s",
+			      client_get_error());
+	}
+	gettimeofday(&end, NULL);
+
+	seconds = end.tv_sec - start.tv_sec;
+	micros = end.tv_usec - start.tv_usec;
+	elapsed = seconds + micros * 1e-6;
+	INFO("Elapsed time: %.6lf seconds", elapsed);
+	INFO("Total sent: %g", 1024.0 * arguments.buffer_size);
+	INFO("Bandwidth: %.6lf Gbps",
+      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size, elapsed));
 
 	INFO("cleanup client");
 	client_cleanup(client);
@@ -130,11 +232,8 @@ static void do_client(int sockfd, Memory context)
 
 int main(int argc, char *argv[])
 {
-	struct memory_provider *provider;
 	ArgumentParser parser;
-
 	Memory context;
-	int sockfd;
 
 	if ( !logger_initialize() ) {
 		fprintf(stderr, "failed to logger_initialize(): %s",
@@ -149,33 +248,25 @@ int main(int argc, char *argv[])
 
 	parse_argument(parser, argc, argv);
 
-	INFO("create socket: %s:%d",
-      	     arguments.bind_address, arguments.bind_port);
-	sockfd = socket_create(arguments.bind_address, arguments.bind_port);
-	if (sockfd == -1)
-		ERROR("failed to socket_create(): %s", socket_get_error());
-
-	provider = &amdgpu_memory_provider;
-
 	INFO("allocate GPU buffer: size %d", arguments.buffer_size);
 	context = provider->alloc(arguments.buffer_size);
 	if (context == NULL)
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
 		      provider->get_error());
-
+	
 	if (arguments.server) {
-		do_server(sockfd, context);
+		do_server(context,
+	    		  arguments.bind_address, arguments.bind_port);
 	} else {
-		do_client(sockfd, context);
+		do_client(context,
+	    		  arguments.bind_address, arguments.bind_port,
+			  arguments.address, arguments.port);
 	}
 
 	INFO("free GPU buffer");
 	if (provider->free(context) == -1)
 		ERROR("failed to amdgpu_memory_provider->free(): %s",
 		      provider->get_error());
-
-	INFO("destroy socket");
-	socket_destroy(sockfd);
 
 	argument_parser_destroy(parser);
 

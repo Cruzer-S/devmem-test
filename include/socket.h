@@ -4,7 +4,11 @@
 #include <stdbool.h>
 
 int socket_create(char *address, int port);
-void socket_destroy(int sockfd);
+
+int socket_connect(int fd, char *address, int port);
+
+int socket_destroy(int sockfd);
+
 char *socket_get_error(void);
 
 #endif

@@ -33,6 +33,20 @@ static int socket_reuseaddr(int fd)
 	return 0;
 }
 
+static int socket_linger(int fd)
+{
+	struct linger linger;
+	int ret;
+
+	linger = (struct linger) { .l_onoff = 1, .l_linger = 1 };
+
+	ret = setsockopt(fd, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger));
+	if (ret == -1)
+		ERROR("failed to setsockopt(): %s", strerror(errno));
+
+	return 0;
+}
+
 int socket_create(char *address, int port)
 {
 	struct sockaddr_in sockaddr;
@@ -52,11 +66,34 @@ int socket_create(char *address, int port)
 		return -1;
 
 	ret = bind(sockfd, (struct sockaddr *) &sockaddr,
-		   sizeof(struct sockaddr_in));
+		   	   sizeof(struct sockaddr_in));
 	if (ret == -1)
 		ERROR("failed to bind(): %s", strerror(errno));
 
 	return sockfd;
+}
+
+int socket_connect(int fd, char *address, int port)
+{
+	struct sockaddr_in sockaddr;
+	int ret;
+
+	/*
+	if (socket_linger(fd) == -1)
+		return -1;
+	*/
+
+	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_port = htons(port);
+	sockaddr.sin_addr.s_addr = inet_addr(address);
+
+	ret = connect(fd, (struct sockaddr *) &sockaddr,
+	       		  sizeof(struct sockaddr_in));
+	if (ret == -1)
+		ERROR("failed to connect(): %s", strerror(errno));
+
+	return 0;
 }
 
 char *socket_get_error(void)
@@ -64,7 +101,7 @@ char *socket_get_error(void)
 	return error;
 }
 
-void socket_destroy(int sockfd)
+int socket_destroy(int sockfd)
 {
-	close(sockfd);
+	return close(sockfd);
 }
