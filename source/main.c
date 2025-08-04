@@ -15,7 +15,9 @@
 #define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
 #define BYTES_TO_GBPS(BYTES, SECONDS)				\
 	(((double)(BYTES) * 8.0) / ((double)(SECONDS) * 1e9))
-#define GET_ELAPSED(START, END) 
+#define GET_ELAPSED(START, END)					\
+	(  ((END).tv_sec - (START).tv_sec)			\
+	 + ((END).tv_usec - (START).tv_usec) * 1e-6 )
 #define ERROR(...) do {			\
 	log(ERRN, __VA_ARGS__);		\
 	exit(EXIT_FAILURE);		\
@@ -147,6 +149,7 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 
 	INFO("buffer_size: %d", arguments.buffer_size);
 	INFO("server: %s", arguments.server ? "Server" : "Client");
+	INFO("do_validation: %s", arguments.do_validation ? "true" : "false");
 
 	if (!arguments.server) {
 		INFO("connect-address: %s", arguments.address);
@@ -158,8 +161,6 @@ static void do_server(Memory context, char *address, int port)
 {
 	Server server;
 	struct timeval start, end;
-	long seconds, micros;
-	double elapsed;
 
 	INFO("setup server");
 	server = server_setup(context, address, port);
@@ -178,14 +179,12 @@ static void do_server(Memory context, char *address, int port)
 			validate_memory(context);
 	}
 	gettimeofday(&end, NULL);
-
-	seconds = end.tv_sec - start.tv_sec;
-	micros = end.tv_usec - start.tv_usec;
-	elapsed = seconds + micros * 1e-6;
-	INFO("Elapsed time: %.6f seconds", elapsed);
-	INFO("Total recieved: %g", 1024.0 * arguments.buffer_size);
+	
+	INFO("Elapsed time: %.6f seconds", GET_ELAPSED(start, end));
+	INFO("Total recieved: %.lf", 1024.0 * arguments.buffer_size);
 	INFO("Bandwidth: %.6f Gbps",
-      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size, elapsed));
+      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size,
+	     GET_ELAPSED(start, end)));
 
 	INFO("cleanup server");
 	server_cleanup(server);
@@ -197,8 +196,6 @@ static void do_client(Memory context,
 {
 	Client client;
 	struct timeval start, end;
-	long seconds, micros;
-	double elapsed;
 
 	INFO("setup client");
 	client = client_setup(context, bind_addr, bind_port);
@@ -217,14 +214,11 @@ static void do_client(Memory context,
 			      client_get_error());
 	}
 	gettimeofday(&end, NULL);
-
-	seconds = end.tv_sec - start.tv_sec;
-	micros = end.tv_usec - start.tv_usec;
-	elapsed = seconds + micros * 1e-6;
-	INFO("Elapsed time: %.6lf seconds", elapsed);
-	INFO("Total sent: %g", 1024.0 * arguments.buffer_size);
+	INFO("Elapsed time: %.6lf seconds", GET_ELAPSED(start, end));
+	INFO("Total sent: %.0lf", 1024.0 * arguments.buffer_size);
 	INFO("Bandwidth: %.6lf Gbps",
-      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size, elapsed));
+      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size,
+	     GET_ELAPSED(start, end)));
 
 	INFO("cleanup client");
 	client_cleanup(client);
