@@ -1,4 +1,4 @@
-CC := gcc 
-CXX := g++
+CC := hipcc
+CXX := hipcc
 
 CFLAGS := -g

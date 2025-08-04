@@ -1,14 +1,13 @@
-#include <stdbool.h>		// bool, true, false
-#include <stdlib.h>		// exit(), EXIT_FAILURE
-#include <string.h>		// strerror()
-#include <errno.h>		// errno
+#include <stdbool.h>			// bool, true, false
+#include <stdlib.h>			// exit(), EXIT_FAILURE
+#include <string.h>			// strerror()
+#include <errno.h>			// errno
 
-#include <sys/time.h>
+#include <sys/time.h>			// struct timeval, gettimeofday()
 
-#include "logger.h"		// log()
-#include "argument-parser.h"	// argument_parser...()
-#include "memory_provider.h"
-
+#include "logger.h"			// log()
+#include "argument-parser.h"		// argument_parser...()
+#include "memory_provider.h"		// amdgpu_memory_provider
 #include "client.h"
 #include "server.h"
 
@@ -39,7 +38,9 @@ struct {
 
 	bool do_validation;
 
-	struct argument_info info[7];
+	bool devmem_tcp;
+
+	struct argument_info info[10];
 } static arguments = { .info = {
 	{
 		"bind-address", "a", "IP address to bind",
@@ -74,6 +75,11 @@ struct {
 	{
 		"validate", "v", "Do memory validation",
 		(ArgumentValue *) &arguments.do_validation,
+		ARGUMENT_PARSER_TYPE_FLAG
+	},
+	{
+		"devmem-tcp", "D", "Use Device Memory TCP",
+		(ArgumentValue *) &arguments.devmem_tcp,
 		ARGUMENT_PARSER_TYPE_FLAG
 	}
 }};
@@ -146,11 +152,10 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 
 	INFO("bind-address: %s", arguments.bind_address);
 	INFO("bind-port: %d", arguments.bind_port);
-
 	INFO("buffer_size: %d", arguments.buffer_size);
-	INFO("server: %s", arguments.server ? "Server" : "Client");
 	INFO("do_validation: %s", arguments.do_validation ? "true" : "false");
-
+	INFO("devmem-tcp: %s", arguments.devmem_tcp ? "true" : "false");
+	INFO("server: %s", arguments.server ? "Server" : "Client");
 	if (!arguments.server) {
 		INFO("connect-address: %s", arguments.address);
 		INFO("connect-port: %d", arguments.port);
@@ -168,7 +173,6 @@ static void do_server(Memory context, char *address, int port)
 		ERROR("failed to server_setup(): %s", server_get_error());
 
 	INFO("start server");
-
 	gettimeofday(&start, NULL);
 	for (int i = 0; i < 1024; i++) {
 		if (server_run_as_tcp(server) == -1)
@@ -206,7 +210,6 @@ static void do_client(Memory context,
 		initialize_memory(context);
 
 	INFO("start client");
-
 	gettimeofday(&start, NULL);
 	for (int i = 0; i < 1024; i++) {
 		if (client_run_as_tcp(client, address, port) == -1)
@@ -214,6 +217,7 @@ static void do_client(Memory context,
 			      client_get_error());
 	}
 	gettimeofday(&end, NULL);
+
 	INFO("Elapsed time: %.6lf seconds", GET_ELAPSED(start, end));
 	INFO("Total sent: %.0lf", 1024.0 * arguments.buffer_size);
 	INFO("Bandwidth: %.6lf Gbps",
@@ -240,6 +244,7 @@ int main(int argc, char *argv[])
 	if (parser == NULL)
 		ERROR("failed to argument_parser_create()");
 
+	INFO("parser arguments");
 	parse_argument(parser, argc, argv);
 
 	INFO("allocate GPU buffer: size %d", arguments.buffer_size);
