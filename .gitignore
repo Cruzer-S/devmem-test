@@ -1,0 +1,6 @@
+compile_commands.json
+output/
+*.sh
+makefile
+library/
+.cache/
