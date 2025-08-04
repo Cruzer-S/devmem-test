@@ -4,25 +4,31 @@
 #include <errno.h>			// errno
 
 #include <sys/time.h>			// struct timeval, gettimeofday()
+#include <net/if.h>			// if_nametoindex()
 
 #include "logger.h"			// log()
 #include "argument-parser.h"		// argument_parser...()
 #include "memory_provider.h"		// amdgpu_memory_provider
+#include "amdgpu_memory.h"		// amdgpu_memory_export_dmabuf()
+#include "netdev-manager.h"		// ndevmgr_get_dmabuf_id()
+
 #include "client.h"
 #include "server.h"
 
 #define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(*(ARR)))
+
 #define BYTES_TO_GBPS(BYTES, SECONDS)				\
 	(((double)(BYTES) * 8.0) / ((double)(SECONDS) * 1e9))
 #define GET_ELAPSED(START, END)					\
 	(  ((END).tv_sec - (START).tv_sec)			\
 	 + ((END).tv_usec - (START).tv_usec) * 1e-6 )
+
+#define INFO(...) log(INFO, __VA_ARGS__)
+#define WARN(...) log(WARN, __VA_ARGS__)
 #define ERROR(...) do {			\
 	log(ERRN, __VA_ARGS__);		\
 	exit(EXIT_FAILURE);		\
 } while (true)
-#define INFO(...) log(INFO, __VA_ARGS__)
-#define WARN(...) log(WARN, __VA_ARGS__)
 
 #define SEED	10
 
@@ -40,7 +46,11 @@ struct {
 
 	bool devmem_tcp;
 
-	struct argument_info info[10];
+	char *interface;
+	int queue_idx;
+	int num_queue;
+
+	struct argument_info info[11];
 } static arguments = { .info = {
 	{
 		"bind-address", "a", "IP address to bind",
@@ -78,9 +88,24 @@ struct {
 		ARGUMENT_PARSER_TYPE_FLAG
 	},
 	{
-		"devmem-tcp", "D", "Use Device Memory TCP",
+		"devmem-tcp", "d", "Use Device Memory TCP",
 		(ArgumentValue *) &arguments.devmem_tcp,
 		ARGUMENT_PARSER_TYPE_FLAG
+	},
+	{
+		"interface", "i", "Interface name",
+		(ArgumentValue *) &arguments.interface,
+		ARGUMENT_PARSER_TYPE_STRING
+	},
+	{
+		"queue_idx", "q", "Start index of queue",
+		(ArgumentValue *) &arguments.queue_idx,
+		ARGUMENT_PARSER_TYPE_INTEGER
+	},
+	{
+		"num_queue", "n", "Number of queue",
+		(ArgumentValue *) &arguments.num_queue,
+		ARGUMENT_PARSER_TYPE_INTEGER
 	}
 }};
 
@@ -231,7 +256,9 @@ static void do_client(Memory context,
 int main(int argc, char *argv[])
 {
 	ArgumentParser parser;
+	NetdevManager ndevmgr;
 	Memory context;
+	int dmabuf_id;
 
 	if ( !logger_initialize() ) {
 		fprintf(stderr, "failed to logger_initialize(): %s",
@@ -247,11 +274,42 @@ int main(int argc, char *argv[])
 	INFO("parser arguments");
 	parse_argument(parser, argc, argv);
 
+	INFO("create netdev manager");
+	ndevmgr = ndevmgr_create();
+	if (ndevmgr == NULL)
+		ERROR("failed to ndevmgr_create(): %s", ndevmgr_get_error());
+
 	INFO("allocate GPU buffer: size %d", arguments.buffer_size);
 	context = provider->alloc(arguments.buffer_size);
 	if (context == NULL)
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
 		      provider->get_error());
+
+	if (arguments.devmem_tcp) {
+		int ret;
+		int ifindex;
+
+		ifindex = if_nametoindex(arguments.interface);
+		if (ifindex == 0)
+			ERROR("failed to if_nametoindex(): %s",
+			      strerror(errno));
+
+		ret = amdgpu_memory_export_dmabuf(context);
+		if (ret == -1)
+			ERROR("failed to amdgpu_memory_export_dmabuf(): %s",
+	 		      amdgpu_memory_get_error());
+
+		ret = ndevmgr_bind_rx_queue(
+			ndevmgr, ifindex,
+			arguments.queue_idx, arguments.num_queue,
+			amdgpu_memory_get_dmabuf_fd(context)
+		);
+		if (ret == -1)
+			ERROR("failed to ndevmgr_bind_rx_queue(): %s",
+	 		      ndevmgr_get_error());
+
+		dmabuf_id = ndevmgr_get_dmabuf_id(ndevmgr);
+	}
 	
 	if (arguments.server) {
 		do_server(context,
@@ -267,6 +325,10 @@ int main(int argc, char *argv[])
 		ERROR("failed to amdgpu_memory_provider->free(): %s",
 		      provider->get_error());
 
+	INFO("destroy netdev manager");
+	ndevmgr_destroy(ndevmgr);
+
+	INFO("destroy argument parser");
 	argument_parser_destroy(parser);
 
 	logger_destroy();
