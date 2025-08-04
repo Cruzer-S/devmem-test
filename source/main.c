@@ -98,12 +98,12 @@ struct {
 		ARGUMENT_PARSER_TYPE_STRING
 	},
 	{
-		"queue_idx", "q", "Start index of queue",
+		"queue-idx", "q", "Start index of queue",
 		(ArgumentValue *) &arguments.queue_idx,
 		ARGUMENT_PARSER_TYPE_INTEGER
 	},
 	{
-		"num_queue", "n", "Number of queue",
+		"num-queue", "n", "Number of queue",
 		(ArgumentValue *) &arguments.num_queue,
 		ARGUMENT_PARSER_TYPE_INTEGER
 	}
@@ -177,17 +177,26 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 
 	INFO("bind-address: %s", arguments.bind_address);
 	INFO("bind-port: %d", arguments.bind_port);
+
 	INFO("buffer_size: %d", arguments.buffer_size);
+
 	INFO("do_validation: %s", arguments.do_validation ? "true" : "false");
-	INFO("devmem-tcp: %s", arguments.devmem_tcp ? "true" : "false");
+
 	INFO("server: %s", arguments.server ? "Server" : "Client");
 	if (!arguments.server) {
 		INFO("connect-address: %s", arguments.address);
 		INFO("connect-port: %d", arguments.port);
 	}
+
+	INFO("devmem-tcp: %s", arguments.devmem_tcp ? "true" : "false");
+	if (!arguments.devmem_tcp) {
+		INFO("interface: %s", arguments.interface);
+		INFO("queue index: %d", arguments.queue_idx);
+		INFO("number of queue: %d", arguments.num_queue);
+	}
 }
 
-static void do_server(Memory context, char *address, int port)
+static void do_server(Memory context, Memory dmabuf, char *address, int port)
 {
 	Server server;
 	struct timeval start, end;
@@ -200,9 +209,16 @@ static void do_server(Memory context, char *address, int port)
 	INFO("start server");
 	gettimeofday(&start, NULL);
 	for (int i = 0; i < 1024; i++) {
-		if (server_run_as_tcp(server) == -1)
-			ERROR("failed to server_run_as_tcp(): %s",
-			      server_get_error());
+		if (arguments.devmem_tcp) {
+			if (server_run_as_dma(server, dmabuf) == -1)
+				ERROR("failed to server_run_as_dma(): %s",
+				      server_get_error());
+		} else {
+			if (server_run_as_tcp(server) == -1)
+				ERROR("failed to server_run_as_tcp(): %s",
+				      server_get_error());
+		}
+		
 
 		if (arguments.do_validation)
 			validate_memory(context);
@@ -257,7 +273,7 @@ int main(int argc, char *argv[])
 {
 	ArgumentParser parser;
 	NetdevManager ndevmgr;
-	Memory context;
+	Memory context, dmabuf;
 	int dmabuf_id;
 
 	if ( !logger_initialize() ) {
@@ -279,7 +295,7 @@ int main(int argc, char *argv[])
 	if (ndevmgr == NULL)
 		ERROR("failed to ndevmgr_create(): %s", ndevmgr_get_error());
 
-	INFO("allocate GPU buffer: size %d", arguments.buffer_size);
+	INFO("allocate GPU buffer: %d", arguments.buffer_size);
 	context = provider->alloc(arguments.buffer_size);
 	if (context == NULL)
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
@@ -289,35 +305,60 @@ int main(int argc, char *argv[])
 		int ret;
 		int ifindex;
 
+		INFO("allocate GPU DMA buffer: %d", arguments.buffer_size);
+		dmabuf = provider->alloc(arguments.buffer_size);
+		if (dmabuf == NULL)
+			ERROR("failed to amdgpu_memory_provider->alloc(): %s",
+		      	      provider->get_error());
+
 		ifindex = if_nametoindex(arguments.interface);
 		if (ifindex == 0)
 			ERROR("failed to if_nametoindex(): %s",
 			      strerror(errno));
+		INFO("interface index: %d", ifindex);
 
-		ret = amdgpu_memory_export_dmabuf(context);
+		INFO("export GPU-DMA buffer", arguments.buffer_size);
+		ret = amdgpu_memory_export_dmabuf(dmabuf);
 		if (ret == -1)
 			ERROR("failed to amdgpu_memory_export_dmabuf(): %s",
 	 		      amdgpu_memory_get_error());
 
+		INFO("bind netdev rx queue", arguments.buffer_size);
 		ret = ndevmgr_bind_rx_queue(
 			ndevmgr, ifindex,
 			arguments.queue_idx, arguments.num_queue,
-			amdgpu_memory_get_dmabuf_fd(context)
+			amdgpu_memory_get_dmabuf_fd(dmabuf)
 		);
 		if (ret == -1)
 			ERROR("failed to ndevmgr_bind_rx_queue(): %s",
 	 		      ndevmgr_get_error());
 
 		dmabuf_id = ndevmgr_get_dmabuf_id(ndevmgr);
+		INFO("GPU-DMA buffer ID: %d", dmabuf_id);
 	}
 	
 	if (arguments.server) {
-		do_server(context,
+		do_server(context, dmabuf,
 	    		  arguments.bind_address, arguments.bind_port);
 	} else {
 		do_client(context,
 	    		  arguments.bind_address, arguments.bind_port,
 			  arguments.address, arguments.port);
+	}
+
+	if (arguments.devmem_tcp) {
+		INFO("release netdev rx queue");
+		ndevmgr_release_rx_queue(ndevmgr);
+
+		INFO("close GPU-DMA buffer");
+		if (amdgpu_memory_close_dmabuf(dmabuf) == -1)
+			ERROR("failed to amdgpu_memory_close_dmabuf(): %s",
+	 		      amdgpu_memory_get_error());
+
+		INFO("free GPU-DMA buffer");
+		if (provider->free(dmabuf) == -1)
+			ERROR("failed to amdgpu_memory_provider->free(): %s",
+	 		      provider->get_error());
 	}
 
 	INFO("free GPU buffer");
