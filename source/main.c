@@ -50,7 +50,9 @@ struct {
 	int queue_idx;
 	int num_queue;
 
-	struct argument_info info[11];
+	int ntimes;
+
+	struct argument_info info[12];
 } static arguments = { .info = {
 	{
 		"bind-address", "a", "IP address to bind",
@@ -65,6 +67,11 @@ struct {
 	{
 		"buffer-size", "b", "Size of the VRAM buffer",
 		(ArgumentValue *) &arguments.buffer_size,
+		ARGUMENT_PARSER_TYPE_INTEGER | ARGUMENT_PARSER_TYPE_MANDATORY
+	},
+	{
+		"ntimes", "N", "Send/Receive N times",
+		(ArgumentValue *) &arguments.ntimes,
 		ARGUMENT_PARSER_TYPE_INTEGER | ARGUMENT_PARSER_TYPE_MANDATORY
 	},
 	{
@@ -179,6 +186,7 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 	INFO("bind-port: %d", arguments.bind_port);
 
 	INFO("buffer_size: %d", arguments.buffer_size);
+	INFO("ntimes: %d", arguments.ntimes);
 
 	INFO("do_validation: %s", arguments.do_validation ? "true" : "false");
 
@@ -189,7 +197,7 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 	}
 
 	INFO("devmem-tcp: %s", arguments.devmem_tcp ? "true" : "false");
-	if (!arguments.devmem_tcp) {
+	if (arguments.devmem_tcp) {
 		INFO("interface: %s", arguments.interface);
 		INFO("queue index: %d", arguments.queue_idx);
 		INFO("number of queue: %d", arguments.num_queue);
@@ -208,7 +216,7 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 
 	INFO("start server");
 	gettimeofday(&start, NULL);
-	for (int i = 0; i < 1024; i++) {
+	for (int i = 0; i < arguments.ntimes; i++) {
 		if (arguments.devmem_tcp) {
 			if (server_run_as_dma(server, dmabuf) == -1)
 				ERROR("failed to server_run_as_dma(): %s",
@@ -218,7 +226,6 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 				ERROR("failed to server_run_as_tcp(): %s",
 				      server_get_error());
 		}
-		
 
 		if (arguments.do_validation)
 			validate_memory(context);
@@ -226,9 +233,10 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 	gettimeofday(&end, NULL);
 	
 	INFO("Elapsed time: %.6f seconds", GET_ELAPSED(start, end));
-	INFO("Total recieved: %.lf", 1024.0 * arguments.buffer_size);
+	INFO("Total recieved: %.lf", (double) arguments.ntimes 
+      					    * arguments.buffer_size);
 	INFO("Bandwidth: %.6f Gbps",
-      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size,
+      	     BYTES_TO_GBPS((double) arguments.ntimes * arguments.buffer_size,
 	     GET_ELAPSED(start, end)));
 
 	INFO("cleanup server");
@@ -252,7 +260,7 @@ static void do_client(Memory context,
 
 	INFO("start client");
 	gettimeofday(&start, NULL);
-	for (int i = 0; i < 1024; i++) {
+	for (int i = 0; i < arguments.ntimes; i++) {
 		if (client_run_as_tcp(client, address, port) == -1)
 			ERROR("failed to client_run_as_tcp(): %s",
 			      client_get_error());
@@ -260,9 +268,10 @@ static void do_client(Memory context,
 	gettimeofday(&end, NULL);
 
 	INFO("Elapsed time: %.6lf seconds", GET_ELAPSED(start, end));
-	INFO("Total sent: %.0lf", 1024.0 * arguments.buffer_size);
+	INFO("Total sent: %.0lf", (double) arguments.ntimes 
+      					 * arguments.buffer_size);
 	INFO("Bandwidth: %.6lf Gbps",
-      	     BYTES_TO_GBPS(1024.0 * arguments.buffer_size,
+      	     BYTES_TO_GBPS((double) arguments.ntimes * arguments.buffer_size,
 	     GET_ELAPSED(start, end)));
 
 	INFO("cleanup client");
@@ -301,7 +310,7 @@ int main(int argc, char *argv[])
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
 		      provider->get_error());
 
-	if (arguments.devmem_tcp) {
+	if (arguments.devmem_tcp && arguments.server) {
 		int ret;
 		int ifindex;
 
@@ -346,7 +355,7 @@ int main(int argc, char *argv[])
 			  arguments.address, arguments.port);
 	}
 
-	if (arguments.devmem_tcp) {
+	if (arguments.devmem_tcp && arguments.server) {
 		INFO("release netdev rx queue");
 		ndevmgr_release_rx_queue(ndevmgr);
 

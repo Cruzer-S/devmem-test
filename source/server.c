@@ -15,7 +15,7 @@
 
 #include "memory_provider.h"
 
-#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(struct dmabuf_cmsg))
+#define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(int) * 100)
 #define BACKLOG		15
 
 #define ERROR(...) do {					\
@@ -130,6 +130,7 @@ int server_run_as_dma(Server server, Memory dmabuf)
 		goto RETURN_ERROR;
 	}
 
+	recvlen = 0;
 	while (true) {
 		struct iovec iov;
 		struct dmabuf_cmsg *dmabuf_cmsg;
@@ -152,6 +153,9 @@ int server_run_as_dma(Server server, Memory dmabuf)
 			goto SOCKET_DESTROY;
 		}
 
+		if (ret == 0)
+			break;
+
 		for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
 		     cmsg;
 		     cmsg = CMSG_NXTHDR(&msg, cmsg))
@@ -164,9 +168,8 @@ int server_run_as_dma(Server server, Memory dmabuf)
 			dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
 			ret = provider->memmove_to(
-				server->context,
-				dmabuf + dmabuf_cmsg->frag_offset,
-				recvlen,
+				server->context, dmabuf,
+				recvlen, dmabuf_cmsg->frag_offset,
 				dmabuf_cmsg->frag_size
 			);
 			if (ret == -1) {
