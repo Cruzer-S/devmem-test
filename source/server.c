@@ -11,9 +11,9 @@
 
 #include <linux/uio.h>	// struct iovec, struct dmabuf_cmsg
 
-#include "socket.h"
-
 #include "memory_provider.h"
+
+#include "socket.h"
 
 #define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(int) * 100)
 #define BACKLOG		15
@@ -65,9 +65,9 @@ Server server_setup(Memory context, char *address, int port)
 
 	return server;
 
-SOCKET_DESTROY:	(void) socket_destroy(server->sockfd);
-FREE_SERVER:	free(server);
-RETURN_NULL:	return NULL;
+SOCKET_DESTROY:		(void) socket_destroy(server->sockfd);
+FREE_SERVER:		free(server);
+RETURN_NULL:		return NULL;
 }
 
 int server_run_as_tcp(Server server)
