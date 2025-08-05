@@ -163,7 +163,8 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 
 static void do_client(Memory context, Memory dmabuf,
 		      char *bind_addr, int bind_port,
-		      char *address, int port)
+		      char *address, int port,
+		      char *interface, int dmabuf_id)
 {
 	Client client;
 	struct timeval start, end;
@@ -179,9 +180,17 @@ static void do_client(Memory context, Memory dmabuf,
 	INFO("start client");
 	gettimeofday(&start, NULL);
 	for (int i = 0; i < arguments.ntimes; i++) {
-		if (client_run_as_tcp(client, address, port) == -1)
-			ERROR("failed to client_run_as_tcp(): %s",
-			      client_get_error());
+		if (dmabuf == NULL) {
+			if (client_run_as_tcp(client, address, port) == -1)
+				ERROR("failed to client_run_as_tcp(): %s",
+				      client_get_error());
+		} else {
+			if (client_run_as_dma(client, dmabuf,
+			 		      address, port,
+					      interface, dmabuf_id) == -1)
+				ERROR("failed to client_run_as_dma(): %s",
+	  			      client_get_error());
+		}
 	}
 	gettimeofday(&end, NULL);
 
@@ -258,7 +267,7 @@ int main(int argc, char *argv[])
 	NetdevManager ndevmgr;
 
 	Memory context, dmabuf;
-	int ifindex, dmabuf_fd;
+	int dmabuf_fd, dmabuf_id;
 
 	if ( !logger_initialize() ) {
 		fprintf(stderr, "failed to logger_initialize(): %s",
@@ -290,6 +299,7 @@ int main(int argc, char *argv[])
 			arguments.queue_idx, arguments.num_queue,
 			arguments.server ? false : true
 		);
+		dmabuf_id = ndevmgr_get_dmabuf_id(ndevmgr);
 	} else {
 		dmabuf = NULL;
 	}
@@ -300,7 +310,8 @@ int main(int argc, char *argv[])
 	} else {
 		do_client(context, dmabuf,
 	    		  arguments.bind_address, arguments.bind_port,
-			  arguments.address, arguments.port);
+			  arguments.address, arguments.port,
+			  arguments.interface, dmabuf_id);
 	}
 
 	if (arguments.devmem_tcp)

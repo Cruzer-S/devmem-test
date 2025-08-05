@@ -78,10 +78,8 @@ int socket_connect(int fd, char *address, int port)
 	struct sockaddr_in sockaddr;
 	int ret;
 
-	/*
 	if (socket_linger(fd) == -1)
 		return -1;
-	*/
 
 	memset(&sockaddr, 0x00, sizeof(struct sockaddr_in));
 	sockaddr.sin_family = AF_INET;
