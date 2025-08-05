@@ -1,14 +1,11 @@
 # 0. Requirements
 ## - makefile
-Latest GNU make require (>= 4.4)
-
+GNU make version 4.4 or later is required. (>= 4.4)
 ```bash
 wget https://raw.githubusercontent.com/Cruzer-S/generic-makefile/main/makefile
 ```
 
 ## - YNL Library
-YNL library
-
 In fedora 42,
 ```bash
 sudo dnf install kernel-tools-libs-devel
