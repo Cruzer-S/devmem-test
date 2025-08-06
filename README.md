@@ -1,4 +1,7 @@
 # 0. Requirements
+## - Linux Kernel
+kernel version 6.16 or later is required.
+
 ## - makefile
 GNU make version 4.4 or later is required. (>= 4.4)
 ```bash
