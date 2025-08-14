@@ -146,7 +146,9 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 		}
 
 		if (arguments.do_validation)
-			memory_validate(context);
+			if (memory_validate(context) == -1)
+				ERROR("failed to memory validation: %s",
+				      memory_get_error());
 	}
 	gettimeofday(&end, NULL);
 	
