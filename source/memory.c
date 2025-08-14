@@ -143,6 +143,8 @@ int memory_validate(Memory memory)
 
 	for (size_t i = 0; i < size; i++) {
 		if (buffer[i] != i % SEED) {
+			ERROR("invalid at %zu (expected %zu, but %d)",
+			      i, i % SEED, buffer[i]);
 			free(buffer);
 			return -1;
 		}
