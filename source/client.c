@@ -14,6 +14,9 @@
 
 #include <linux/errqueue.h>
 
+#define __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+
 #include "memory_provider.h"
 
 #include "socket.h"
@@ -244,12 +247,15 @@ int client_run_as_dma(Client client, Memory dmabuf, char *address, int port,
 		goto DESTROY_SOCKET;
 	}
 
-	ret = provider->memmove_to(client->context, dmabuf, 0, 0, client->size);
+	ret = provider->memmove_to(
+		client->context, dmabuf, 0, 0, client->size
+	);
 	if (ret == -1) {
 		ERROR("failed to amdgpu_memory_provider->memmove_to(): %s",
 		      provider->get_error());
 		goto DESTROY_SOCKET;
 	}
+	hipDeviceSynchronize();
 
 	sendlen = 0;
 	while (sendlen < client->size) {
