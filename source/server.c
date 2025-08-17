@@ -15,6 +15,9 @@
 
 #include "socket.h"
 
+#define __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+
 #define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(int) * 100)
 #define BACKLOG		15
 
@@ -168,8 +171,8 @@ int server_run_as_dma(Server server, Memory dmabuf)
 			dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
 			ret = provider->memmove_to(
-				server->context, dmabuf,
-				recvlen, dmabuf_cmsg->frag_offset,
+				dmabuf, server->context,
+				dmabuf_cmsg->frag_offset, recvlen,
 				dmabuf_cmsg->frag_size
 			);
 			if (ret == -1) {
@@ -182,6 +185,7 @@ int server_run_as_dma(Server server, Memory dmabuf)
 				// `socket_destroy()` will release all
 				// associated resources.
 			}
+			hipDeviceSynchronize();
 
 			token.token_start = dmabuf_cmsg->frag_token;
 			token.token_count = 1;
