@@ -6,17 +6,16 @@
 #include <string.h>	// strerror()
 #include <errno.h>	// errno
 
+#include <unistd.h>
+
 #define __iovec_defined	// do not define `struct iovec`
 #include <sys/socket.h>	// accept(), recv(), send(), etc.
 
 #include <linux/uio.h>	// struct iovec, struct dmabuf_cmsg
 
-#include "memory_provider.h"
-
 #include "socket.h"
 
-#define __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
+#include "memory_provider.h"
 
 #define CTRL_DATA_SIZE	CMSG_SPACE(sizeof(int) * 100)
 #define BACKLOG		15
@@ -27,20 +26,20 @@
 
 struct server {
 	Memory context;
-	char *buffer;
+	Memory buffer;
 	size_t size;
 
 	int sockfd;
 };
 
 static char error[BUFSIZ];
-static struct memory_provider *provider = &amdgpu_memory_provider;
+extern MemoryProvider gp, hp;
 
-Server server_setup(Memory context, char *address, int port)
+Server server_setup(Memory context, size_t size, char *address, int port)
 {
 	Server server;
 
-	server = malloc(sizeof(struct server));
+	server = (Server) malloc(sizeof(struct server));
 	if (server == NULL) {
 		ERROR("failed to malloc(): %s", strerror(errno));
 		goto RETURN_NULL;
@@ -53,14 +52,14 @@ Server server_setup(Memory context, char *address, int port)
 	}
 
 	server->context = context;
-	server->size = provider->get_size(context);
+	server->size = size;
 
 	if (listen(server->sockfd, BACKLOG) == -1) {
 		ERROR("failed to listen(): %s", strerror(errno));
 		goto SOCKET_DESTROY;
 	}
 
-	server->buffer = malloc(server->size);
+	server->buffer = memory_provider_alloc(hp, size);
 	if (server->buffer == NULL) {
 		ERROR("failed to malloc(): %s", strerror(errno));
 		goto SOCKET_DESTROY;
@@ -69,7 +68,7 @@ Server server_setup(Memory context, char *address, int port)
 	return server;
 
 SOCKET_DESTROY:		(void) socket_destroy(server->sockfd);
-FREE_SERVER:		free(server);
+FREE_SERVER:		memory_provider_free(hp, server->buffer);
 RETURN_NULL:		return NULL;
 }
 
@@ -90,7 +89,7 @@ int server_run_as_tcp(Server server)
 
 	recvlen = 0;
 	while (true) {
-		int ret = recv(clnt_fd, server->buffer + recvlen, 
+		int ret = recv(clnt_fd, ((char *) server->buffer) + recvlen, 
 		 			server->size - recvlen, 0);
 		if (ret == -1) {
 			ERROR("failed to recv(): %s", strerror(errno));
@@ -99,14 +98,19 @@ int server_run_as_tcp(Server server)
 
 		if (ret == 0)
 			break;
-	
+
 		recvlen += ret;
 	}
 
-	ret = provider->memcpy_to(context, server->buffer, 0, server->size);
+	if (memory_provider_allow_access(hp, gp, server->buffer) == -1)
+		return -1;
+
+	ret = memory_provider_copy(
+		gp, context, server->buffer, server->size
+	);
 	if (ret == -1) {
 		ERROR("failed to amdgpu_memory_provider->memcpy_to(): %s",
-		      provider->get_error());
+		       memory_provider_get_error(gp));
 		goto SOCKET_DESTROY;
 	}
 
@@ -126,6 +130,8 @@ int server_run_as_dma(Server server, Memory dmabuf)
 	int clnt_fd;
 	size_t recvlen;
 	int ret;
+
+	int last_token;
 
 	clnt_fd = accept(server->sockfd, NULL, 0);
 	if (clnt_fd == -1) {
@@ -170,24 +176,17 @@ int server_run_as_dma(Server server, Memory dmabuf)
 
 			dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
-			ret = provider->memmove_to(
-				dmabuf, server->context,
-				dmabuf_cmsg->frag_offset, recvlen,
+			ret = memory_provider_copy(
+				gp, (Memory) (((char *) server->context) + recvlen),
+				(Memory) (((char *) dmabuf) + dmabuf_cmsg->frag_offset),
 				dmabuf_cmsg->frag_size
 			);
 			if (ret == -1) {
 				ERROR("failed to amdgpu_memory_provider->"
 	  			      "memmove_to(): %s",
-				      provider->get_error());
+				      memory_provider_get_error(gp));
 				goto SOCKET_DESTROY;
-
-				// Unfreed tokens are not an issue;
-				// `socket_destroy()` will release all
-				// associated resources.
 			}
-			hipDeviceSynchronize();
-
-			token.token_start = dmabuf_cmsg->frag_token;
 			token.token_count = 1;
 			if (setsockopt(clnt_fd, SOL_SOCKET, SO_DEVMEM_DONTNEED,
 				       &token, sizeof(token)) == -1) {
@@ -195,13 +194,18 @@ int server_run_as_dma(Server server, Memory dmabuf)
 	  			      strerror(errno));
 				goto SOCKET_DESTROY;
 			}
-
+			
 			recvlen += dmabuf_cmsg->frag_size;
 		}
 	}
 
 	if (socket_destroy(clnt_fd) == -1)
 		goto RETURN_ERROR;
+
+	/*
+	if (memory_provider_wait(gp) == -1)
+		return -1;
+	*/
 
 	return 0;
 
@@ -212,7 +216,7 @@ RETURN_ERROR:	return -1;
 void server_cleanup(Server server)
 {
 	socket_destroy(server->sockfd);
-	free(server->buffer);
+	memory_provider_free(hp, server->buffer);
 	free(server);
 }
 

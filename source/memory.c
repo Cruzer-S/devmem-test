@@ -6,7 +6,10 @@
 #include <stdbool.h>	// false
 #include <stdio.h>	// BUFSIZ, snprintf()
 
-#include "amdgpu_memory.h"
+#include "memory_provider.h"
+
+#include <hsa/hsa.h>
+#include <hsa/hsa_ext_amd.h>
 
 #define SEED	10
 
@@ -14,143 +17,134 @@
 	snprintf(error, BUFSIZ, __VA_ARGS__);	\
 } while (false)
 
-static struct memory_provider *provider = &amdgpu_memory_provider;
+MemoryProvider gp;
+MemoryProvider hp;
+
 static char error[BUFSIZ];
 
-Memory memory_allocate(size_t size)
+Memory memory_allocate(MemoryProvider mp, size_t size)
 {
 	Memory memory;
 
-	memory = provider->alloc(size);
+	memory = memory_provider_alloc(mp, size);
 	if (memory == NULL) {
 		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
-		      provider->get_error());
+		      memory_provider_get_error(mp));
 		return NULL;
 	}
 
 	return memory;
 }
 
-Memory memory_allocate_dmabuf(size_t size, int *dmabuf_fd)
+int memory_export(MemoryProvider mp, Memory memory, size_t size)
 {
-	Memory memory;
+	hsa_status_t status;
+	uint64_t offset;
+	int dmabuf_fd;
 	int ret;
 
-	memory = provider->alloc(size);
-	if (memory == NULL) {
-		ERROR("failed to amdgpu_memory_provider->alloc(): %s",
-		      provider->get_error());
-		goto RETURN_NULL;
-	}
-
-	ret = amdgpu_memory_export_dmabuf(memory);
-	if (ret == -1) {
-		ERROR("failed to amdgpu_memory_export_dmabuf(): %s",
-		      amdgpu_memory_get_error());
+	status = hsa_amd_portable_export_dmabuf(
+		memory, size, &dmabuf_fd, &offset
+	);
+	if (status != HSA_STATUS_SUCCESS) {
+		const char *message;
+		hsa_status_string(status, &message);
+		ERROR("failed to amdgpu_memory_export_dmabuf(): %s", message);
 		goto FREE_MEMORY;
 	}
 
-	*dmabuf_fd = amdgpu_memory_get_dmabuf_fd(memory);
+	return dmabuf_fd;
 
-	return memory;
-
-FREE_MEMORY:	(void) provider->free(memory);
-RETURN_NULL:	return NULL;
+FREE_MEMORY:	(void) memory_provider_free(gp, memory);
+RETURN_ERROR:	return -1;
 }
 
-int memory_free(Memory memory)
+int memory_close(int dmabuf_fd)
+{
+	return hsa_amd_portable_close_dmabuf(dmabuf_fd) == HSA_STATUS_SUCCESS 
+	       ? 0 : -1;
+}
+
+int memory_free(MemoryProvider mp, Memory memory)
 {
 	int ret;
 
-	ret = provider->free(memory);
+	ret = memory_provider_free(mp, memory);
 	if (ret == -1) {
 		ERROR("failed to amdgpu_memory_provider->free(): %s",
-		      provider->get_error());
+		      memory_provider_get_error(mp));
 		return -1;
 	}
 
 	return 0;
 }
 
-int memory_free_dmabuf(Memory memory)
+int memory_initialize(Memory memory, size_t size)
 {
+	Memory buffer;
 	int ret;
 
-	ret = amdgpu_memory_close_dmabuf(memory);
-	if (ret == -1) {
-		ERROR("failed to amdgpu_memory_export_dmabuf(): %s",
-		      amdgpu_memory_get_error());
-		return -1;
-	}
-
-	ret = provider->free(memory);
-	if (ret == -1) {
-		ERROR("failed to amdgpu_memory_provider->free(): %s",
-		      provider->get_error());
-		return -1;
-	}
-
-	return 0;
-}
-
-int memory_initialize(Memory memory)
-{
-	char *buffer;
-	size_t size;
-	int ret;
-
-	size = provider->get_size(memory);
-
-	buffer = (char *) malloc(size);
+	buffer = memory_provider_alloc(hp, size);
 	if (buffer == NULL) {
 		ERROR("failed to malloc(): %s", strerror(errno));
 		goto RETURN_ERROR;
 	}
 
 	for (size_t i = 0; i < size; i++)
-		buffer[i] = i % SEED;
+		((char *) buffer)[i] = i % SEED;
 
-	ret = provider->memcpy_to(memory, buffer, 0, size);
-	if (ret == -1) {
-		ERROR("failed to amdgpu_memory_provider->memcpy_to(): %s",
-		      provider->get_error());
+	if (memory_provider_allow_access(hp, gp, buffer) == -1) {
+		ERROR("failed to memory_provider_allow_access(): %s",
+		      memory_provider_get_error(hp));
 		goto FREE_BUFFER;
 	}
 
-	free(buffer);
+	ret = memory_provider_copy(hp, memory, buffer, size);
+	if (ret == -1) {
+		ERROR("failed to amdgpu_memory_provider->memcpy_to(): %s",
+		      memory_provider_get_error(hp));
+		goto FREE_BUFFER;
+	}
+
+	if (memory_provider_free(hp, buffer) == -1) {
+		ERROR("failed to memory_provider_free(): %s",
+		      memory_provider_get_error(hp));
+		goto RETURN_ERROR;
+	}
 
 	return 0;
 
-FREE_BUFFER:	free(buffer);
+FREE_BUFFER:	memory_provider_free(hp, buffer);
 RETURN_ERROR:	return -1;
 }
 
-int memory_validate(Memory memory)
+int memory_validate(Memory memory, size_t size)
 {
-	char *buffer;
-	size_t size;
+	Memory buffer;
 
-	size = provider->get_size(memory);
-
-	buffer = (char *) malloc(size);
+	buffer = memory_provider_alloc(hp, size);
 	if (buffer == NULL)
 		return -1;
 
-	if (provider->memcpy_from(buffer, memory, 0, size) == -1) {
-		free(buffer); 
+	if (memory_provider_allow_access(hp, gp, buffer) == -1)
+		return -1;
+
+	if (memory_provider_copy(hp, buffer, memory, size) == -1) {
+		memory_provider_free(hp, buffer); 
 		return -1;
 	}
 
 	for (size_t i = 0; i < size; i++) {
-		if (buffer[i] != i % SEED) {
+		if (((char *) buffer)[i] != i % SEED) {
 			ERROR("invalid at %zu (expected %zu, but %d)",
-			      i, i % SEED, buffer[i]);
-			free(buffer);
+			      i, i % SEED, ((char *) buffer)[i]);
+			memory_provider_free(hp, buffer);
 			return -1;
 		}
 	}
 
-	free(buffer);
+	if (memory_provider_free(hp, buffer) == -1)
+		return -1;
 
 	return 0;
 }
@@ -158,4 +152,26 @@ int memory_validate(Memory memory)
 const char *memory_get_error(void)
 {
 	return error;
+}
+
+int memory_init(void)
+{
+	gp = memory_provider_create("gfx1101");
+	if (gp == NULL)
+		goto RETURN_ERR;
+
+	hp = memory_provider_create("AMD Ryzen 5 9600X 6-Core Processor");
+	if (hp == NULL)
+		goto DESTROY_MEMORY_PROVIDER;
+
+	return 0;
+
+DESTROY_MEMORY_PROVIDER: memory_provider_destroy(hp);
+RETURN_ERR:		 return -1;
+}
+
+void memory_cleanup(void)
+{
+	memory_provider_destroy(gp);
+	memory_provider_destroy(hp);
 }

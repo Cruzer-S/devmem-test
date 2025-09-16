@@ -8,7 +8,6 @@
 
 #include "logger.h"			// log()
 #include "argument-parser.h"		// argument_parser...()
-#include "memory_provider.h"		// amdgpu_memory_provider
 #include "netdev-manager.h"		// ndevmgr_get_dmabuf_id()
 
 #include "client.h"
@@ -122,13 +121,13 @@ static void parse_argument(ArgumentParser parser, int argc, char *argv[])
 	}
 }
 
-static void do_server(Memory context, Memory dmabuf, char *address, int port)
+static void do_server(Memory context, size_t size, Memory dmabuf, char *address, int port)
 {
 	Server server;
 	struct timeval start, end;
 
 	INFO("setup server");
-	server = server_setup(context, address, port);
+	server = server_setup(context, size, address, port);
 	if (server == NULL)
 		ERROR("failed to server_setup(): %s", server_get_error());
 
@@ -146,7 +145,7 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 		}
 
 		if (arguments.do_validation)
-			if (memory_validate(context) == -1)
+			if (memory_validate(context, size) == -1)
 				ERROR("failed to memory validation: %s",
 				      memory_get_error());
 	}
@@ -163,7 +162,7 @@ static void do_server(Memory context, Memory dmabuf, char *address, int port)
 	server_cleanup(server);
 }
 
-static void do_client(Memory context, Memory dmabuf,
+static void do_client(Memory context, size_t size, Memory dmabuf,
 		      char *bind_addr, int bind_port,
 		      char *address, int port,
 		      char *interface, int dmabuf_id)
@@ -172,12 +171,12 @@ static void do_client(Memory context, Memory dmabuf,
 	struct timeval start, end;
 
 	INFO("setup client");
-	client = client_setup(context, bind_addr, bind_port);
+	client = client_setup(context, size, bind_addr, bind_port);
 	if (client == NULL)
 		ERROR("failed to client_setup(): %s", client_get_error());
 
 	if (arguments.do_validation)
-		memory_initialize(context);
+		memory_initialize(context, size);
 
 	INFO("start client");
 	gettimeofday(&start, NULL);
@@ -208,10 +207,9 @@ static void do_client(Memory context, Memory dmabuf,
 }
 
 static Memory create_dmabuf(NetdevManager ndevmgr, char *interface,
-			    int queue_idx, int num_queue, bool as_tx)
+			    int queue_idx, int num_queue, bool as_tx, int *dmabuf_fd)
 {
 	Memory dmabuf;
-	int dmabuf_fd;
 	int ifindex;
 
 	int ret;
@@ -222,24 +220,29 @@ static Memory create_dmabuf(NetdevManager ndevmgr, char *interface,
 	INFO("interface index: %d", ifindex);
 
 	INFO("allocate GPU-DMA buffer: %d", arguments.buffer_size);
-	dmabuf = memory_allocate_dmabuf(arguments.buffer_size, &dmabuf_fd);
+	dmabuf = memory_allocate(gp, arguments.buffer_size * 2);
 	if (dmabuf == NULL)
 		ERROR("failed to memory_allocate_dmabuf(): %s",
 		      memory_get_error());
-	INFO("GPU-DMA buffer fd: %d", dmabuf_fd);
+
+	*dmabuf_fd = memory_export(gp, dmabuf, arguments.buffer_size);
+	if (*dmabuf_fd == -1)
+		ERROR("failed to memory_export(): %s", memory_get_error());
+
+	INFO("GPU-DMA buffer fd: %d", *dmabuf_fd);
 
 	INFO("bind %s queue", as_tx ? "tx" : "rx");
 	if (as_tx) {
 		ret = ndevmgr_bind_tx_queue(
 			ndevmgr,
 			ifindex, queue_idx, num_queue,
-			dmabuf_fd
+			*dmabuf_fd
 		);
 	} else {
 		ret = ndevmgr_bind_rx_queue(
 			ndevmgr,
 			ifindex, queue_idx, num_queue,
-			dmabuf_fd
+			*dmabuf_fd
 		);
 	}
 
@@ -250,7 +253,8 @@ static Memory create_dmabuf(NetdevManager ndevmgr, char *interface,
 	return dmabuf;
 }
 
-static void destroy_dmabuf(NetdevManager ndevmgr, Memory dmabuf, bool as_tx)
+static void destroy_dmabuf(NetdevManager ndevmgr,
+			   Memory dmabuf, int dmabuf_fd, bool as_tx)
 {
 	if (as_tx)
 		ndevmgr_release_tx_queue(ndevmgr);
@@ -258,9 +262,12 @@ static void destroy_dmabuf(NetdevManager ndevmgr, Memory dmabuf, bool as_tx)
 		ndevmgr_release_rx_queue(ndevmgr);
 
 	INFO("free GPU-DMA buffer");
-	if (memory_free_dmabuf(dmabuf) == -1)
+	if (memory_free(gp, dmabuf) == -1)
 		ERROR("failed to memory_free_dmabuf(): %s",
 		      memory_get_error());
+
+	if (memory_close(dmabuf_fd) == -1)
+		ERROR("failed to memory_close(): %s", memory_get_error());
 }
 
 int main(int argc, char *argv[])
@@ -283,15 +290,18 @@ int main(int argc, char *argv[])
 		ERROR("failed to argument_parser_create()");
 
 	INFO("parser arguments");
-	parse_argument(parser, argc, argv);
+	parse_argument(parser, argc, argv);	
 
 	INFO("create netdev manager");
 	ndevmgr = ndevmgr_create();
 	if (ndevmgr == NULL)
 		ERROR("failed to ndevmgr_create(): %s", ndevmgr_get_error());
 
+	if (memory_init() == -1)
+		ERROR("failed to memory_init(): %s", memory_get_error());
+
 	INFO("allocate GPU buffer: %d", arguments.buffer_size);
-	context = memory_allocate(arguments.buffer_size);
+	context = memory_allocate(gp, arguments.buffer_size);
 	if (context == NULL)
 		ERROR("failed to memory_allocate(): %s", memory_get_error());
 
@@ -299,7 +309,8 @@ int main(int argc, char *argv[])
 		dmabuf = create_dmabuf(
 			ndevmgr, arguments.interface,
 			arguments.queue_idx, arguments.num_queue,
-			arguments.server ? false : true
+			arguments.server ? false : true,
+			&dmabuf_fd
 		);
 		dmabuf_id = ndevmgr_get_dmabuf_id(ndevmgr);
 	} else {
@@ -307,10 +318,12 @@ int main(int argc, char *argv[])
 	}
 
 	if (arguments.server) {
-		do_server(context, dmabuf,
+		do_server(context,
+	    		  arguments.buffer_size, dmabuf,
 	    		  arguments.bind_address, arguments.bind_port);
 	} else {
-		do_client(context, dmabuf,
+		do_client(context, arguments.buffer_size,
+	    		  dmabuf,
 	    		  arguments.bind_address, arguments.bind_port,
 			  arguments.address, arguments.port,
 			  arguments.interface, dmabuf_id);
@@ -318,11 +331,13 @@ int main(int argc, char *argv[])
 
 	if (arguments.devmem_tcp)
 		destroy_dmabuf(ndevmgr, dmabuf,
-		 	       arguments.server ? false : true);
+		 	       arguments.server ? false : true, dmabuf_fd);
 
 	INFO("free GPU buffer");
-	if (memory_free(context) == -1)
+	if (memory_free(gp, context) == -1)
 		ERROR("failed to memory_free(): %s", memory_get_error());
+
+	memory_cleanup();
 
 	INFO("destroy netdev manager");
 	ndevmgr_destroy(ndevmgr);

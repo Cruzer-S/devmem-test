@@ -5,15 +5,22 @@
 
 #include "memory_provider.h"
 
-Memory memory_allocate(size_t );
-Memory memory_allocate_dmabuf(size_t , int *dmabuf_fd);
+extern MemoryProvider gp;
+extern MemoryProvider hp;
 
-int memory_validate(Memory );
-int memory_initialize(Memory );
+int memory_init(void);
 
-int memory_free(Memory );
-int memory_free_dmabuf(Memory );
+Memory memory_allocate(MemoryProvider , size_t );
+int memory_free(MemoryProvider , Memory );
+
+int memory_export(MemoryProvider , Memory , size_t );
+int memory_close(int );
+
+int memory_validate(Memory , size_t );
+int memory_initialize(Memory , size_t );
 
 const char *memory_get_error(void);
+
+void memory_cleanup(void);
 
 #endif

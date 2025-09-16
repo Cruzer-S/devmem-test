@@ -7,17 +7,13 @@
 #include <stddef.h>	// size_t
 #include <stdbool.h>	// false
 #include <stdint.h>	// uint32_t
+#include <unistd.h>
 
 #include <sys/socket.h>
 #include <sys/time.h>	// gettimeofday()
 #include <sys/poll.h>	// poll()
 
 #include <linux/errqueue.h>
-
-#define __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-
-#include "memory_provider.h"
 
 #include "socket.h"
 
@@ -34,7 +30,7 @@
 
 struct client {
 	Memory context;
-	char *buffer;
+	Memory buffer;
 	size_t size;
 
 	char *address;
@@ -42,7 +38,7 @@ struct client {
 };
 
 static char error[BUFSIZ];
-static struct memory_provider *provider = &amdgpu_memory_provider;
+extern MemoryProvider hp, gp;
 
 static uint64_t gettimeofday_ms(void)
 {
@@ -121,7 +117,7 @@ static int wait_compl(int fd)
 }
 
 
-Client client_setup(Memory context, char *address, int port)
+Client client_setup(Memory context, size_t size, char *address, int port)
 {
 	Client client;
 	struct sockaddr_in *sockaddr;
@@ -134,11 +130,11 @@ Client client_setup(Memory context, char *address, int port)
 	}	
 	
 	client->context = context;
-	client->size = provider->get_size(context);
+	client->size = size;
 	client->address = address;
 	client->port = port;
 
-	client->buffer = malloc(client->size);
+	client->buffer = memory_provider_alloc(hp, client->size);
 	if (client->buffer == NULL) {
 		ERROR("failed to malloc(): %s", strerror(errno));
 		goto FREE_CLIENT;
@@ -169,15 +165,18 @@ int client_run_as_tcp(Client client, char *address, int port)
 		goto SOCKET_DESTROY;
 	}
 
-	ret = provider->memcpy_from(client->buffer, client->context,
-			     	    0, client->size);
+	if (memory_provider_allow_access(hp, gp, client->buffer) == -1)
+		return -1;
+
+	ret = memory_provider_copy(hp, client->buffer,
+			     	   client->context, client->size);
 	if (ret == -1)
 		ERROR("failed to amdgpu_memory_provider->memcpy_from(): %s",
-		      provider->get_error());
+		      memory_provider_get_error(gp));
 
 	sendlen = 0;
 	while (sendlen < client->size) {
-		ret = send(sockfd, client->buffer + sendlen,
+		ret = send(sockfd, ((char *) client->buffer) + sendlen,
 	     		   client->size - sendlen, 0);
 		if (ret == -1) {
 			ERROR("failed to send(): %s", strerror(errno));
@@ -247,15 +246,14 @@ int client_run_as_dma(Client client, Memory dmabuf, char *address, int port,
 		goto DESTROY_SOCKET;
 	}
 
-	ret = provider->memmove_to(
-		client->context, dmabuf, 0, 0, client->size
+	ret = memory_provider_copy(
+		gp, dmabuf, client->context, client->size
 	);
 	if (ret == -1) {
 		ERROR("failed to amdgpu_memory_provider->memmove_to(): %s",
-		      provider->get_error());
+		      memory_provider_get_error(gp));
 		goto DESTROY_SOCKET;
 	}
-	hipDeviceSynchronize();
 
 	sendlen = 0;
 	while (sendlen < client->size) {
@@ -303,7 +301,7 @@ RETURN_ERROR:	return -1;
 
 void client_cleanup(Client client)
 {
-	free(client->buffer);
+	memory_provider_free(hp, client->buffer);
 	free(client);
 }
 
