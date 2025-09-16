@@ -176,6 +176,7 @@ int server_run_as_dma(Server server, Memory dmabuf)
 
 			dmabuf_cmsg = (struct dmabuf_cmsg *) CMSG_DATA(cmsg);
 
+			/*
 			ret = memory_provider_copy(
 				gp, (Memory) (((char *) server->context) + recvlen),
 				(Memory) (((char *) dmabuf) + dmabuf_cmsg->frag_offset),
@@ -187,6 +188,7 @@ int server_run_as_dma(Server server, Memory dmabuf)
 				      memory_provider_get_error(gp));
 				goto SOCKET_DESTROY;
 			}
+			*/
 			token.token_count = 1;
 			if (setsockopt(clnt_fd, SOL_SOCKET, SO_DEVMEM_DONTNEED,
 				       &token, sizeof(token)) == -1) {
